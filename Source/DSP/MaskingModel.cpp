@@ -1,9 +1,10 @@
 #include "MaskingModel.h"
+#include <cmath>
 
 float MaskingModel::hzToBark(float hz)
 {
-    // Barkスケールへの近似変換公式
-    return 26.81f * hz / (1960.0f + hz) - 0.53f;
+    // Zwicker and Terhardt (1980) の公式
+    return 13.0f * std::atan(0.00076f * hz) + 3.5f * std::atan(std::pow(hz / 7500.0f, 2.0f));
 }
 
 void MaskingModel::prepare(double sampleRate, int fftSize)
@@ -11,44 +12,58 @@ void MaskingModel::prepare(double sampleRate, int fftSize)
     currentSampleRate = sampleRate;
     currentFftSize = fftSize;
 
-    int numBins = fftSize / 2 + 1;
+    const int numBins = fftSize / 2 + 1;
+    barkMap_.assign(static_cast<size_t>(numBins), 0);
 
-    // 【DSP Safety】マッピングテーブルの事前確保
-    barkMap_.assign(numBins, 0);
+    const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
 
-    float binFreq = (float)sampleRate / (float)fftSize;
-
-    // 各FFTビンが0〜23のどのBark帯域に属するかを事前計算しておく
+    // 各FFTビンが属するBark帯域を事前計算
     for (int i = 0; i < numBins; ++i)
     {
-        float hz = i * binFreq;
+        float hz = static_cast<float>(i) * binFreq;
         float bark = hzToBark(hz);
-        int barkIdx = (int)std::floor(bark);
+        int barkIdx = static_cast<int>(std::floor(bark));
 
-        // 安全のため 0 ~ 23 の範囲にクランプ
-        if (barkIdx < 0) barkIdx = 0;
-        if (barkIdx >= NUM_BARK) barkIdx = NUM_BARK - 1;
+        // 0 ~ 23 の範囲に制限
+        barkMap_[static_cast<size_t>(i)] = (barkIdx < 0) ? 0 : (barkIdx >= NUM_BARK ? NUM_BARK - 1 : barkIdx);
+    }
 
-        barkMap_[i] = barkIdx;
+    // --- Spreading Function (マスキングの広がり) の事前計算 ---
+    // これにより processBlock 内での sqrt や複雑な演算を排除します
+    for (int m = 0; m < NUM_BARK; ++m)
+    {
+        for (int k = 0; k < NUM_BARK; ++k)
+        {
+            // マスカー(m)とマスキー(k)の距離
+            float dz = static_cast<float>(k - m);
+
+            // Schröder et al. (1979) による近似式
+            // SF(dB) = 15.81 + 7.5*(dz + 0.474) - 17.5*sqrt(1 + (dz + 0.474)^2)
+            float arg = dz + 0.474f;
+            float sfValue = 15.81f + 7.5f * arg - 17.5f * std::sqrt(1.0f + arg * arg);
+
+            spreadingTable[m][k] = sfValue;
+        }
     }
 }
 
 std::array<float, MaskingModel::NUM_BARK> MaskingModel::calcBarkPower(const float* powerSpectrum, int numBins) const
 {
-    std::array<float, NUM_BARK> barkPowerLinear = { 0.0f };
+    std::array<float, NUM_BARK> barkPowerLinear;
+    barkPowerLinear.fill(0.0f);
 
-    // 生ポインタと事前計算マップによる超低負荷な帯域集計
+    // パワースペクトルを各Bark帯域に加算
     for (int i = 0; i < numBins; ++i)
     {
-        int b = barkMap_[i];
-        barkPowerLinear[b] += powerSpectrum[i];
+        int bandIdx = barkMap_[static_cast<size_t>(i)];
+        barkPowerLinear[static_cast<size_t>(bandIdx)] += powerSpectrum[i];
     }
 
     std::array<float, NUM_BARK> barkPowerDB;
     for (int i = 0; i < NUM_BARK; ++i)
     {
-        // 0割りと log10(0) を防ぐために 1e-9f を加算してデシベル変換
-        barkPowerDB[i] = juce::Decibels::gainToDecibels(barkPowerLinear[i] + 1e-9f, -120.0f);
+        // log10(0) 回避のため 1e-12f を加算
+        barkPowerDB[static_cast<size_t>(i)] = juce::Decibels::gainToDecibels(barkPowerLinear[static_cast<size_t>(i)] + 1e-12f, -120.0f);
     }
 
     return barkPowerDB;
@@ -57,28 +72,27 @@ std::array<float, MaskingModel::NUM_BARK> MaskingModel::calcBarkPower(const floa
 std::array<float, MaskingModel::NUM_BARK> MaskingModel::calcMaskingThreshold(const std::array<float, NUM_BARK>& barkPowerDB) const
 {
     std::array<float, NUM_BARK> threshold;
-    threshold.fill(-120.0f); // ベースノイズフロア設定
+    threshold.fill(-120.0f);
 
-    // 各帯域が「マスカー（隠す側）」として、他の帯域「マスキー（隠される側）」に与える影響を計算
-    for (int masker = 0; masker < NUM_BARK; ++masker)
+    // 二重ループだが、内部は単なる「加算」と「比較」のみ
+    for (int m = 0; m < NUM_BARK; ++m)
     {
-        float Lm = barkPowerDB[masker];
+        float maskerLevel = barkPowerDB[static_cast<size_t>(m)];
 
-        // 音量が小さすぎる帯域はマスキング効果がないためスキップ (CPU負荷削減)
-        if (Lm < -20.0f) continue;
+        // 低レベルな帯域はマスキング効果を無視して計算スキップ
+        if (maskerLevel < -50.0f) continue;
 
-        for (int maskee = 0; maskee < NUM_BARK; ++maskee)
+        const float* sfRow = spreadingTable[m];
+
+        for (int k = 0; k < NUM_BARK; ++k)
         {
-            float dz = (float)(maskee - masker);
+            // マスカーのレベルに広がり関数(SF)を足す
+            float maskedLevel = maskerLevel + sfRow[k];
 
-            // 開発計画書に記載された Spreading Function (広がり関数) の近似式
-            float SF = 15.81f + 7.5f * (dz + 0.474f) - 17.5f * std::sqrt(1.0f + (dz + 0.474f) * (dz + 0.474f));
-            float contrib = Lm + SF;
-
-            // 複数のマスカーからの影響のうち、最大のものを閾値とする
-            if (contrib > threshold[maskee])
+            // その帯域における最大マスキングレベルを保持
+            if (maskedLevel > threshold[static_cast<size_t>(k)])
             {
-                threshold[maskee] = contrib;
+                threshold[static_cast<size_t>(k)] = maskedLevel;
             }
         }
     }
@@ -92,29 +106,26 @@ float MaskingModel::computeGainReduction(const std::array<float, NUM_BARK>& bark
 {
     float maxExcessDB = 0.0f;
 
-    // 現在の信号がマスキング閾値から「どれだけ耳障りに飛び出しているか(Excess)」の最大値を探す
+    // 各帯域で「信号レベルがマスキング閾値をどれだけ超えているか」を確認
     for (int i = 0; i < NUM_BARK; ++i)
     {
-        float excess = barkPowerDB[i] - maskThreshDB[i];
+        float excess = barkPowerDB[static_cast<size_t>(i)] - maskThreshDB[static_cast<size_t>(i)];
         if (excess > maxExcessDB)
         {
             maxExcessDB = excess;
         }
     }
 
-    float targetGain = 1.0f;
-
-    // 飛び出し量(maxExcessDB)が、ユーザーが設定したThreshold(負の値)を超えたらリダクション実行
-    // 例: maxExcessDBが 10dB で、thresholdDBが -5dB なら、5dBのオーバーシュート
+    // ユーザー設定のThreshold（マイナスの値）との加算
+    // 信号が目立っていれば overShoot はプラスの値になる
     float overShoot = maxExcessDB + thresholdDB;
 
     if (overShoot > 0.0f)
     {
-        // Depth (0.0 ~ 1.0) に応じてカット量を決定
+        // 目立ちすぎている量(overShoot)に適用率(depth)をかけ、dBをゲイン係数(0.0~1.0)に変換
         float reductionDB = overShoot * depth;
-        targetGain = juce::Decibels::decibelsToGain(-reductionDB);
+        return juce::Decibels::decibelsToGain(-reductionDB);
     }
 
-    // 安全のため、0.0 (完全ミュート) から 1.0 (原音そのまま) の範囲に収める
-    return juce::jlimit(0.0f, 1.0f, targetGain);
+    return 1.0f;
 }
