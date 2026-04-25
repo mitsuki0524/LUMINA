@@ -54,5 +54,5 @@ private:
 
     double currentSampleRate = 44100.0;
 
-    JU_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OnsetDetector)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OnsetDetector)
 };

@@ -53,5 +53,5 @@ private:
     std::vector<float> hWorkspace;
     std::vector<float> pWorkspace;
 
-    JU_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HPSSEngine)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HPSSEngine)
 };

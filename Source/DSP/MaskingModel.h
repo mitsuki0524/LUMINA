@@ -55,5 +55,5 @@ private:
     double currentSampleRate = 44100.0;
     int currentFftSize = 4096;
 
-    JU_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MaskingModel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MaskingModel)
 };
