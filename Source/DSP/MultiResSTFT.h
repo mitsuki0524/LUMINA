@@ -1,5 +1,4 @@
 #pragma once
-
 #include <JuceHeader.h>
 #include <vector>
 #include <complex>
@@ -31,7 +30,16 @@ public:
      */
     bool process(const float* input, int numSamples);
 
-    std::vector<float> getMergedPowerSpectrum() const;
+    /**
+     * @brief 3帯域のパワースペクトルを1つの高解像度配列に統合する
+     */
+    void updateMergedPower();
+
+    /**
+     * @brief 統合されたパワースペクトルの生ポインタを取得する（DSPセーフ）
+     */
+    const float* getMergedPowerPointer() const;
+
     int getLatencySamples() const;
 
     std::vector<STFTBand> bands;
@@ -41,9 +49,9 @@ private:
         STFTBand& band, juce::dsp::FFT& fft,
         const std::vector<float>& window);
 
-    juce::dsp::FFT fftLow{ 12 };
-    juce::dsp::FFT fftMid{ 10 };
-    juce::dsp::FFT fftHigh{ 8 };
+    juce::dsp::FFT fftLow{ 12 };  // 4096
+    juce::dsp::FFT fftMid{ 10 };  // 1024
+    juce::dsp::FFT fftHigh{ 8 };  // 256
 
     std::vector<float> hannLow;
     std::vector<float> hannMid;
@@ -52,4 +60,12 @@ private:
     std::vector<float> mergedPower;
 
     double currentSampleRate = 44100.0;
+
+    // --- 事前計算されたマージ用パラメータ（オーディオスレッドの負荷削減） ---
+    int crossoverBinMid = 0;
+    int crossoverBinHigh = 0;
+    int binRatioMid = 1;
+    int binRatioHigh = 1;
+    float scaleMid = 1.0f;
+    float scaleHigh = 1.0f;
 };

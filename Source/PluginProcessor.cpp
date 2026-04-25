@@ -21,7 +21,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // Warning C4996 回避のため、ParameterID を明示的に使用
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "THRESHOLD", 1 }, "Threshold",
         juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -24.0f, "dB"));
@@ -74,7 +73,10 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     tonalMaskWorkspace.assign(static_cast<size_t>(maxBins), 1.0f);
 
-    gainSmooth.reset(sampleRate, 0.023);
+    // オーディオスレッドでのメモリ再確保を防ぐため、余裕を持たせたバッファを事前確保
+    monoAnalysisBuffer.assign(8192, 0.0f);
+
+    gainSmooth.reset(sampleRate, 0.023); // 約23msの平滑化
     gainSmooth.setCurrentAndTargetValue(1.0f);
 
     setLatencySamples(stft.getLatencySamples());
@@ -102,7 +104,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     for (int i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, numSamples);
 
-    // RMS ゲート
+    // RMS ゲートによる不要な解析のスキップ
     float rms = buffer.getRMSLevel(0, 0, numSamples);
     if (rms < 1e-6f)
     {
@@ -120,35 +122,72 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 
-    const float* analysisPointer = buffer.getReadPointer(0);
-    bool newFrameReady = stft.process(analysisPointer, numSamples);
+    // --- 解析用バッファの合成 (ステレオリンク または Mid抽出) ---
+    float* analysisPtr = monoAnalysisBuffer.data();
+    const float* ch0 = buffer.getReadPointer(0);
+
+    if (totalNumInputChannels > 1) {
+        const float* ch1 = buffer.getReadPointer(1);
+        for (int i = 0; i < numSamples; ++i) {
+            // LとRの平均をとり、位相と波形を安全に維持したまま両方のピークを捉える
+            analysisPtr[i] = (ch0[i] + ch1[i]) * 0.5f;
+        }
+    }
+    else {
+        for (int i = 0; i < numSamples; ++i) {
+            analysisPtr[i] = ch0[i];
+        }
+    }
+
+    bool newFrameReady = stft.process(analysisPtr, numSamples);
 
     if (newFrameReady)
     {
+        stft.updateMergedPower();
         const int numBins = stft.bands[0].fftSize / 2 + 1;
-        const float* currentPower = stft.bands[0].power.data();
+        const float* currentPower = stft.getMergedPowerPointer();
 
+        // HPSS分離とトランジェント検知
         hpss.process(currentPower, tonalMaskWorkspace.data(), numBins);
         bool isOnset = onsetDetector.detectOnset(currentPower, numBins);
+
+        // 心理音響計算とTonal Ratioの集約
         auto barkPower = maskingModel.calcBarkPower(currentPower, numBins);
         auto maskThresh = maskingModel.calcMaskingThreshold(barkPower);
-
-        float targetGain = isOnset ? 1.0f : maskingModel.computeGainReduction(barkPower, maskThresh, threshold, depth);
-        gainSmooth.setTargetValue(targetGain);
+        auto tonalRatio = maskingModel.calcBarkTonalRatio(tonalMaskWorkspace.data(), numBins);
 
         AnalysisFrame frame;
         frame.isOnset = isOnset;
         frame.barkPower = barkPower;
 
+        float maxReductionDB = 0.0f;
+
+        // 帯域別ゲインリダクションの計算
         for (int i = 0; i < 24; ++i)
         {
             float excess = barkPower[i] - maskThresh[i] + threshold;
+
             if (excess > 0.0f && !isOnset)
-                frame.barkGainReduction[i] = juce::Decibels::decibelsToGain(-(excess * depth));
+            {
+                // 超過量に深さと調波比率を掛け、打撃音（tonalRatio=0近傍）を保護
+                float bandReductionDB = excess * depth * tonalRatio[i];
+
+                if (bandReductionDB > maxReductionDB) {
+                    maxReductionDB = bandReductionDB;
+                }
+                frame.barkGainReduction[i] = juce::Decibels::decibelsToGain(-bandReductionDB);
+            }
             else
+            {
                 frame.barkGainReduction[i] = 1.0f;
+            }
         }
 
+        // 最もリダクションの強い帯域に合わせて全体のターゲットゲインを設定
+        float targetGain = juce::Decibels::decibelsToGain(-maxReductionDB);
+        gainSmooth.setTargetValue(targetGain);
+
+        // UI表示用のスペクトル縮小
         const int binsPerUI = numBins / 512;
         for (int i = 0; i < 512; ++i) {
             float sumP = 0.0f;
@@ -163,10 +202,32 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         analysisFifo.push(frame);
     }
 
-    for (int ch = 0; ch < totalNumOutputChannels; ++ch) {
-        float* channelData = buffer.getWritePointer(ch);
+    // --- ゲインリダクションの適用 ---
+    if (isMsMode && totalNumOutputChannels > 1)
+    {
+        // M/Sモード: Mid(ch0)にのみゲインを適用し、Side(ch1)はそのまま通過させる
+        float* midData = buffer.getWritePointer(0);
         for (int i = 0; i < numSamples; ++i) {
-            channelData[i] *= gainSmooth.getNextValue();
+            midData[i] *= gainSmooth.getNextValue();
+        }
+    }
+    else
+    {
+        // ステレオ/モノラルモード: 全チャンネルに同じゲインを適用（ステレオリンク）
+        if (totalNumOutputChannels == 1) {
+            float* chData = buffer.getWritePointer(0);
+            for (int i = 0; i < numSamples; ++i) {
+                chData[i] *= gainSmooth.getNextValue();
+            }
+        }
+        else {
+            float* leftData = buffer.getWritePointer(0);
+            float* rightData = buffer.getWritePointer(1);
+            for (int i = 0; i < numSamples; ++i) {
+                float g = gainSmooth.getNextValue();
+                leftData[i] *= g;
+                rightData[i] *= g;
+            }
         }
     }
 
