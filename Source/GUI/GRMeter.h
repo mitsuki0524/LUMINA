@@ -1,36 +1,25 @@
-#ifndef LUMINA_GRMeter_H
-#define LUMINA_GRMeter_H
+#ifndef LUMINA_GRMETER_H
+#define LUMINA_GRMETER_H
 
-#include <JuceHeader.h>
+#include <juce_core/juce_core.h>
+#include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <array>
 #include "AnalysisFifo.h"
 
-/**
- * @class GRMeter
- * @brief 24帯域のBarkスケールに基づいたゲインリダクションを表示するメーター。
- * スペクトラムアナライザの上に重ねるか、独立して配置することで、
- * どの帯域が抑制されているかを視覚化します。
- */
 class GRMeter : public juce::Component
 {
 public:
     GRMeter();
-    ~GRMeter() override = default;
+    ~GRMeter() override;
 
-    void paint(juce::Graphics& g) override;
-    void resized() override;
-
-    /**
-     * @brief 最新の解析フレームを渡し、描画データを更新
-     */
     void updateFrame(const AnalysisFrame& frame);
+    void paint(juce::Graphics& g) override;
 
 private:
-    AnalysisFrame currentFrame;
-
-    // 表示を滑らかにするためのフォールオフ（減衰）係数
-    std::array<float, 24> visualGains;
+    std::array<float, 24> displayedGR; // メーターの滑らかなアニメーション用
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GRMeter)
 };
 
-#endif // LUMINA_GRMeter_H
+#endif

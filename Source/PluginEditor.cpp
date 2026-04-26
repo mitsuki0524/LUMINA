@@ -4,7 +4,6 @@
 LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
-    // カスタムLookAndFeelの適用
     setLookAndFeel(&customLookAndFeel);
 
     addAndMakeVisible(spectrumAnalyzer);
@@ -55,7 +54,6 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     addAndMakeVisible(msModeButton);
     msModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "MS_MODE", msModeButton);
 
-    // 余裕を持ったウィンドウサイズ
     setSize(960, 750);
     startTimerHz(30);
 }
@@ -63,7 +61,7 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
 LUMINAEditor::~LUMINAEditor()
 {
     stopTimer();
-    setLookAndFeel(nullptr); // メモリリーク防止のため必須
+    setLookAndFeel(nullptr);
 }
 
 void LUMINAEditor::paint(juce::Graphics& g)
@@ -78,17 +76,16 @@ void LUMINAEditor::resized()
     // 上部: アナライザー (高さ 300px)
     auto visArea = bounds.removeFromTop(300);
     spectrumAnalyzer.setBounds(visArea.reduced(10));
-    grMeter.setBounds(visArea.reduced(10));
+    grMeter.setBounds(visArea.reduced(10)); // GRMeterをスペクトラムと完全に重ねる
 
     auto uiArea = bounds.reduced(15);
 
-    // 中段: クロスオーバーとM/S (高さ 80px)
     auto globalRow = uiArea.removeFromTop(80);
 
     auto msArea = globalRow.removeFromLeft(120);
     msModeButton.setBounds(msArea.withSizeKeepingCentre(100, 30));
 
-    globalRow.reduce(100, 0); // 中央に寄せるための余白
+    globalRow.reduce(100, 0);
     auto cross1Area = globalRow.removeFromLeft(globalRow.getWidth() / 2);
     auto cross2Area = globalRow;
 
@@ -98,16 +95,15 @@ void LUMINAEditor::resized()
     crossLabels[1].setBounds(cross2Area.removeFromTop(20));
     crossSliders[1].setBounds(cross2Area);
 
-    uiArea.removeFromTop(10); // パネルとの間の余白
+    uiArea.removeFromTop(10);
 
-    // 下段: 3バンドパネル (残りの空間)
     int panelWidth = uiArea.getWidth() / 3;
 
     for (int b = 0; b < 3; ++b) {
-        auto panelBounds = uiArea.removeFromLeft(panelWidth).reduced(8); // 各パネル間の隙間
+        auto panelBounds = uiArea.removeFromLeft(panelWidth).reduced(8);
 
         bandTitles[b].setBounds(panelBounds.removeFromTop(25));
-        panelBounds.removeFromTop(10); // タイトル下の余白
+        panelBounds.removeFromTop(10);
 
         auto btnRow = panelBounds.removeFromTop(30);
         bandButtons[b][0].setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(5, 0));
@@ -115,7 +111,6 @@ void LUMINAEditor::resized()
 
         panelBounds.removeFromTop(20);
 
-        // ノブを 2x2 グリッドで配置
         auto topKnobRow = panelBounds.removeFromTop(90);
         auto threshArea = topKnobRow.removeFromLeft(topKnobRow.getWidth() / 2);
         auto depthArea = topKnobRow;
@@ -142,7 +137,6 @@ void LUMINAEditor::resized()
 
 void LUMINAEditor::timerCallback()
 {
-    // クロスオーバー値をプロセッサから取得してアナライザーに渡す
     float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
     float c2 = processor.apvts.getRawParameterValue("CROSS_2")->load();
     spectrumAnalyzer.setCrossovers(c1, c2);
@@ -157,6 +151,7 @@ void LUMINAEditor::timerCallback()
 
     if (hasNewData) {
         spectrumAnalyzer.updateFrame(latestFrame);
+        grMeter.updateFrame(latestFrame); // ⚡ コメントアウトを外して有効化
         repaint();
     }
 }

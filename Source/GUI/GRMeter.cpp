@@ -1,58 +1,57 @@
 #include "GRMeter.h"
+#include <cmath>
 
 GRMeter::GRMeter()
 {
-    visualGains.fill(0.0f);
+    // 初期状態は1.0 (ゲインリダクション 0dB)
+    displayedGR.fill(1.0f);
 }
+
+GRMeter::~GRMeter() {}
 
 void GRMeter::updateFrame(const AnalysisFrame& frame)
 {
-    for (int i = 0; i < 24; ++i)
-    {
-        // 実際のGR量（dBなど）を 0.0 ~ 1.0 の描画用に変換
-        // 1.0 (加工なし) なら 0.0 (バーの長さ0)、0.5 なら 0.5 のように変換
-        float targetGR = 1.0f - frame.barkGainReduction[i];
-
-        // 立ち上がりは速く、戻りは少しゆっくりにして視認性を高める
-        if (targetGR > visualGains[i])
-            visualGains[i] = targetGR;
-        else
-            visualGains[i] = visualGains[i] * 0.85f + targetGR * 0.15f;
+    // メーターの滑らかなアニメーション（アタック速め、リリース遅め）
+    for (size_t i = 0; i < 24; ++i) {
+        float target = frame.barkGainReduction[i];
+        if (target < displayedGR[i]) {
+            displayedGR[i] = target; // アタック（即座に反応）
+        }
+        else {
+            displayedGR[i] = displayedGR[i] * 0.85f + target * 0.15f; // リリース（滑らかに戻る）
+        }
     }
+    repaint();
 }
 
 void GRMeter::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    auto width = bounds.getWidth();
-    auto height = bounds.getHeight();
+    float barWidth = bounds.getWidth() / 24.0f;
 
-    // 24本のバーを描画
-    float barSpacing = 1.0f;
-    float barWidth = (width / 24.0f) - barSpacing;
+    // アナライザーの上部から最大60ピクセル分下がるように設定
+    const float maxGrHeight = 60.0f;
 
-    // ゲインリダクションを示す色（警告色としてのオレンジ/赤）
-    auto grColour = juce::Colours::orange.withAlpha(0.6f);
+    for (int i = 0; i < 24; ++i) {
+        // リニアゲインをdBに変換
+        float grDb = juce::Decibels::gainToDecibels(displayedGR[i]);
+        if (grDb > 0.0f) grDb = 0.0f; // 安全のためのクランプ
 
-    for (int i = 0; i < 24; ++i)
-    {
-        float grAmount = visualGains[i];
-        if (grAmount > 0.001f)
-        {
-            float x = i * (barWidth + barSpacing);
-            // 上から下に伸びるバーを描画
-            float barHeight = height * grAmount;
+        // -18dB を最大の振り幅として高さをマッピング
+        float mappedHeight = juce::jmap(grDb, -18.0f, 0.0f, maxGrHeight, 0.0f);
+        mappedHeight = juce::jlimit(0.0f, maxGrHeight, mappedHeight);
 
-            g.setColour(grColour);
-            g.fillRect(x, 0.0f, barWidth, barHeight);
+        // わずかでも削られていれば描画
+        if (mappedHeight > 1.0f) {
+            juce::Rectangle<float> bar(i * barWidth + 1.0f, 0.0f, barWidth - 2.0f, mappedHeight);
 
-            // 先端を少し明るくして強調
-            g.setColour(juce::Colours::white.withAlpha(0.3f));
-            g.drawHorizontalLine((int)barHeight, x, x + barWidth);
+            // Ableton風のオレンジ色（半透明）
+            g.setColour(juce::Colour::fromString("99FF764D"));
+            g.fillRect(bar);
+
+            // バーの一番下にソリッドなラインを描画して視認性を高める
+            g.setColour(juce::Colour::fromString("FFFF764D"));
+            g.fillRect(bar.getX(), bar.getBottom() - 2.0f, bar.getWidth(), 2.0f);
         }
     }
-}
-
-void GRMeter::resized()
-{
 }

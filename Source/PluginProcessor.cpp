@@ -17,7 +17,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // クロスオーバー周波数
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "CROSS_1", 1 }, "Crossover 1",
         juce::NormalisableRange<float>(20.0f, 2000.0f, 1.0f, 0.3f), 250.0f,
@@ -28,7 +27,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         juce::NormalisableRange<float>(1000.0f, 20000.0f, 1.0f, 0.3f), 4000.0f,
         juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
-    // 3バンド分のパラメータ
     juce::StringArray bandPrefixes = { "B1_", "B2_", "B3_" };
     juce::StringArray bandNames = { "Low ", "Mid ", "High " };
 
@@ -66,7 +64,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
             juce::AudioParameterBoolAttributes()));
     }
 
-    // M/S モード
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ "MS_MODE", 1 }, "M/S Mode", false,
         juce::AudioParameterBoolAttributes()));
@@ -155,46 +152,94 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 }
 
                 const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+                const float transRatio = 1.414f;
+
+                // ⚡ GRメーター用のアレイ
+                std::array<float, 24> barkGR;
+                barkGR.fill(1.0f);
 
                 for (int i = 0; i < numBins; ++i)
                 {
                     float hz = static_cast<float>(i) * binFreq;
-                    int b = 0;
-                    if (hz > cross2) b = 2;
-                    else if (hz > cross1) b = 1;
-
-                    float currentDepth = (isMsMode && ch == 1) ? 0.0f : bands[b].depth;
                     int barkIdx = binToBarkMap[i];
-                    float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
-                    float reductionGain = 1.0f;
+                    float tRatio = tonalRatio[barkIdx];
 
-                    if (excess > 0.0f && !isOnset) {
-                        float reductionDB = excess * currentDepth * tonalRatio[barkIdx];
-                        reductionGain = juce::Decibels::decibelsToGain(-reductionDB);
+                    float pureReductionGains[3]; // 純粋なリダクション量
+                    float targetGains[3];        // 最終的なゲイン（メイクアップ含む）
+
+                    for (int b = 0; b < 3; ++b) {
+                        float currentDepth = (isMsMode && ch == 1) ? 0.0f : bands[b].depth;
+                        float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
+                        float reductionGain = 1.0f;
+
+                        if (excess > 0.0f && !isOnset) {
+                            float reductionDB = excess * currentDepth * tRatio;
+                            reductionGain = juce::Decibels::decibelsToGain(-reductionDB);
+                        }
+
+                        pureReductionGains[b] = reductionGain;
+
+                        float shiftMultiplier = (bands[b].tonalShift * tRatio) + (bands[b].transShift * (1.0f - tRatio));
+                        targetGains[b] = reductionGain * shiftMultiplier;
                     }
 
-                    float tRatio = tonalRatio[barkIdx];
-                    float shiftMultiplier = (bands[b].tonalShift * tRatio) + (bands[b].transShift * (1.0f - tRatio));
-                    float finalGain = reductionGain * shiftMultiplier;
+                    float wLow = 1.0f, wMid = 0.0f, wHigh = 0.0f;
 
-                    float originalMag = magnitudes[i];
-
-                    if (anySolo) {
-                        if (bands[b].isSolo) {
-                            magnitudes[i] = bands[b].isDelta ? originalMag * (1.0f - finalGain) : originalMag * finalGain;
-                        }
-                        else {
-                            magnitudes[i] = 0.0f;
-                        }
+                    float c1_L = cross1 / transRatio;
+                    float c1_U = cross1 * transRatio;
+                    if (hz < c1_L) {
+                        wLow = 1.0f; wMid = 0.0f;
+                    }
+                    else if (hz > c1_U) {
+                        wLow = 0.0f; wMid = 1.0f;
                     }
                     else {
-                        if (bands[b].isDelta) {
-                            magnitudes[i] = originalMag * (1.0f - finalGain);
+                        float t = (hz - c1_L) / (c1_U - c1_L);
+                        float mix = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::pi * t));
+                        wLow = 1.0f - mix;
+                        wMid = mix;
+                    }
+
+                    float c2_L = cross2 / transRatio;
+                    float c2_U = cross2 * transRatio;
+                    if (hz > c2_L) {
+                        if (hz > c2_U) {
+                            wMid = 0.0f; wHigh = 1.0f;
                         }
                         else {
-                            magnitudes[i] = originalMag * finalGain;
+                            float t = (hz - c2_L) / (c2_U - c2_L);
+                            float mix = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::pi * t));
+                            wHigh = wMid * mix;
+                            wMid = wMid * (1.0f - mix);
                         }
                     }
+
+                    // ⚡ GRメーター用に純粋なリダクション量を合成し、最も削られている値を保存
+                    float blendedReduction = (pureReductionGains[0] * wLow) + (pureReductionGains[1] * wMid) + (pureReductionGains[2] * wHigh);
+                    if (blendedReduction < barkGR[barkIdx]) {
+                        barkGR[barkIdx] = blendedReduction;
+                    }
+
+                    float originalMag = magnitudes[i];
+                    float finalGain = 0.0f;
+
+                    if (anySolo) {
+                        float soloGain = 0.0f;
+                        if (bands[0].isSolo) soloGain += (bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0]) * wLow;
+                        if (bands[1].isSolo) soloGain += (bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1]) * wMid;
+                        if (bands[2].isSolo) soloGain += (bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2]) * wHigh;
+
+                        finalGain = soloGain;
+                    }
+                    else {
+                        float g0 = bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0];
+                        float g1 = bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1];
+                        float g2 = bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2];
+
+                        finalGain = (g0 * wLow) + (g1 * wMid) + (g2 * wHigh);
+                    }
+
+                    magnitudes[i] = originalMag * finalGain;
                     binGains[i] = finalGain;
                 }
 
@@ -202,7 +247,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
                     frame.barkPower = barkPower;
-                    frame.barkGainReduction.fill(1.0f);
+
+                    // ⚡ GRのデータをフレームにコピー
+                    for (int i = 0; i < 24; ++i) {
+                        frame.barkGainReduction[i] = barkGR[i];
+                    }
 
                     const int binsPerUI = numBins / 512;
                     for (int i = 0; i < 512; ++i) {
@@ -281,5 +330,4 @@ void LUMINAProcessor::setStateInformation(const void* data, int sizeInBytes)
             apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-// ⚡ この末尾の関数が失われていたことが、最大のビルドエラー原因でした。
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new LUMINAProcessor(); }
