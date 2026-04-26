@@ -1,138 +1,121 @@
 #include "SpectrumAnalyzer.h"
+#include <cmath> // ⚡ std::log10 用の必須ヘッダーを追加
 
-SpectrumAnalyzer::SpectrumAnalyzer()
+SpectrumAnalyzer::SpectrumAnalyzer() {}
+SpectrumAnalyzer::~SpectrumAnalyzer() {}
+
+void SpectrumAnalyzer::updateFrame(const AnalysisFrame& frame)
 {
-    // GUI表示用に縮小された512ビンの周波数を事前計算
-    // 例として 0〜22050Hz を 512分割したと仮定してマッピング
-    binFrequencies.resize(512);
-    for (int i = 0; i < 512; ++i)
-    {
-        float freq = (i / 511.0f) * 22050.0f;
-        // 対数計算の安全のため、最低周波数を20Hzに制限
-        if (freq < 20.0f) freq = 20.0f;
-        binFrequencies[i] = freq;
-    }
+    currentFrame = frame;
+    repaint();
 }
 
-void SpectrumAnalyzer::updateFrame(const AnalysisFrame& newFrame)
+void SpectrumAnalyzer::setCrossovers(float c1, float c2)
 {
-    currentFrame = newFrame;
-    // 注意: ここで repaint() は呼びません。
-    // Timerループで一括して repaint() を呼ぶことで、UIの過負荷を防ぎます。
+    cross1 = c1;
+    cross2 = c2;
 }
 
 void SpectrumAnalyzer::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    float width = bounds.getWidth();
-    float height = bounds.getHeight();
 
-    // 1. 背景とグリッド線の描画
-    g.setColour(juce::Colour(0xff2A2A2A));
-    g.fillRoundedRectangle(bounds, 8.0f);
+    // スペクトラム背景（少し明るめ）
+    g.fillAll(juce::Colour(0xff2A2A2A));
 
-    g.setColour(juce::Colours::grey.withAlpha(0.2f));
-    // 簡易的なHzグリッド（100Hz, 1kHz, 10kHz）
-    float x100 = mapToLogX(100.0f, width);
-    float x1k = mapToLogX(1000.0f, width);
-    float x10k = mapToLogX(10000.0f, width);
-    g.drawVerticalLine((int)x100, 0.0f, height);
-    g.drawVerticalLine((int)x1k, 0.0f, height);
-    g.drawVerticalLine((int)x10k, 0.0f, height);
+    // --- Hzグリッドの描画 ---
+    g.setColour(juce::Colours::white.withAlpha(0.15f));
+    g.setFont(11.0f);
 
-    // 2. Bark帯域パワー（マスキングモデルの認識状態）の描画
-    // 背景のブロック状のグラフとして、耳が捉えているエネルギーを可視化
-    g.setColour(juce::Colour(0xff4A90E2).withAlpha(0.3f)); // 薄いブルー
-    for (int i = 0; i < 24; ++i)
+    const float freqs[] = { 20.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f };
+    const juce::String labels[] = { "20", "", "100", "", "", "1k", "", "", "10k", "20k" };
+
+    for (int i = 0; i < 10; ++i) {
+        float normX = std::log10(freqs[i] / 20.0f) / std::log10(20000.0f / 20.0f);
+        float x = bounds.getWidth() * normX;
+        g.drawVerticalLine(static_cast<int>(x), 0.0f, bounds.getHeight());
+        if (labels[i].isNotEmpty()) {
+            g.drawText(labels[i], static_cast<int>(x) + 4, static_cast<int>(bounds.getHeight()) - 16, 30, 16, juce::Justification::left);
+        }
+    }
+
+    // --- クロスオーバー境界線の描画 ---
+    g.setColour(juce::Colours::white.withAlpha(0.4f));
+    float xC1 = bounds.getWidth() * (std::log10(cross1 / 20.0f) / std::log10(20000.0f / 20.0f));
+    float xC2 = bounds.getWidth() * (std::log10(cross2 / 20.0f) / std::log10(20000.0f / 20.0f));
+    float dashPattern[] = { 4.0f, 4.0f };
+    g.drawDashedLine(juce::Line<float>(xC1, 0, xC1, bounds.getHeight()), dashPattern, 2);
+    g.drawDashedLine(juce::Line<float>(xC2, 0, xC2, bounds.getHeight()), dashPattern, 2);
+
+    // --- 3バンド・マルチカラー波形の描画（隙間ゼロ・スナップ修正版） ---
+    if (currentFrame.magnitudeSpectrum.size() == 512)
     {
-        float barkDB = currentFrame.barkPower[i];
-        if (barkDB > -96.0f)
+        juce::Path pathLow, pathMid, pathHigh;
+        bool firstLow = true, firstMid = true, firstHigh = true;
+
+        // ⚡ 境界線の隙間を埋めるための座標保持変数
+        float prevX = 0.0f;
+        float prevY = 0.0f;
+        float prevFreq = 0.0f;
+
+        for (size_t i = 0; i < 512; ++i)
         {
-            float freqLeft = getBarkCenterFreq(std::max(0, i - 1));
-            float freqRight = getBarkCenterFreq(i);
-            float xL = mapToLogX(freqLeft, width);
-            float xR = mapToLogX(freqRight, width);
+            float freq = (static_cast<float>(i) / 512.0f) * 22050.0f;
+            if (freq < 20.0f) freq = 20.0f;
+            if (freq > 20000.0f) freq = 20000.0f;
 
-            // dBをLinearに簡易変換してY軸計算
-            float mag = juce::Decibels::decibelsToGain(barkDB);
-            float y = mapToLogY(mag, height);
+            float normX = std::log10(freq / 20.0f) / std::log10(20000.0f / 20.0f);
+            float x = bounds.getWidth() * normX;
 
-            g.fillRect(xL, y, std::max(1.0f, xR - xL), height - y);
+            float mag = currentFrame.magnitudeSpectrum[i];
+            float db = juce::Decibels::gainToDecibels(mag, -80.0f);
+            float y = juce::jmap(db, -80.0f, 0.0f, bounds.getHeight(), 0.0f);
+
+            if (freq <= cross1) {
+                if (firstLow) { pathLow.startNewSubPath(x, y); firstLow = false; }
+                else { pathLow.lineTo(x, y); }
+            }
+            else if (freq <= cross2) {
+                // ⚡ Low から Mid に切り替わる瞬間（両方のPathに線を引いて接着する）
+                if (prevFreq <= cross1 && !firstLow) {
+                    pathLow.lineTo(x, y); // Lowの線をここまで伸ばす
+                    pathMid.startNewSubPath(prevX, prevY); // Midの線を一つ前の点から開始する
+                    pathMid.lineTo(x, y);
+                    firstMid = false;
+                }
+                else {
+                    if (firstMid) { pathMid.startNewSubPath(x, y); firstMid = false; }
+                    else { pathMid.lineTo(x, y); }
+                }
+            }
+            else {
+                // ⚡ Mid から High に切り替わる瞬間（両方のPathに線を引いて接着する）
+                if (prevFreq <= cross2 && !firstMid) {
+                    pathMid.lineTo(x, y); // Midの線をここまで伸ばす
+                    pathHigh.startNewSubPath(prevX, prevY); // Highの線を一つ前の点から開始する
+                    pathHigh.lineTo(x, y);
+                    firstHigh = false;
+                }
+                else {
+                    if (firstHigh) { pathHigh.startNewSubPath(x, y); firstHigh = false; }
+                    else { pathHigh.lineTo(x, y); }
+                }
+            }
+
+            prevX = x;
+            prevY = y;
+            prevFreq = freq;
         }
+
+        g.setColour(juce::Colour::fromString("FF00E5FF")); // Low (Bright Cyan)
+        g.strokePath(pathLow, juce::PathStrokeType(2.0f));
+
+        g.setColour(juce::Colour::fromString("FFFF764D")); // Mid (Ableton Orange)
+        g.strokePath(pathMid, juce::PathStrokeType(2.0f));
+
+        g.setColour(juce::Colour::fromString("FFFF00FF")); // High (Bright Magenta)
+        g.strokePath(pathHigh, juce::PathStrokeType(2.0f));
     }
-
-    // 3. 高解像度スペクトルパスの構築と描画
-    juce::Path spectrumPath;
-    bool firstPoint = true;
-
-    for (int i = 0; i < 512; ++i)
-    {
-        float x = mapToLogX(binFrequencies[i], width);
-        float y = mapToLogY(currentFrame.magnitudeSpectrum[i], height);
-
-        if (firstPoint) {
-            spectrumPath.startNewSubPath(x, y);
-            firstPoint = false;
-        }
-        else {
-            spectrumPath.lineTo(x, y);
-        }
-    }
-
-    // スペクトル線の描画（鮮やかな緑）
-    g.setColour(juce::Colour(0xff1D9E75));
-    g.strokePath(spectrumPath, juce::PathStrokeType(1.5f));
-
-    // スペクトル下部のグラデーション塗りつぶし
-    spectrumPath.lineTo(width, height);
-    spectrumPath.lineTo(0.0f, height);
-    spectrumPath.closeSubPath();
-
-    juce::ColourGradient gradient(juce::Colour(0xff1D9E75).withAlpha(0.4f), 0, 0,
-        juce::Colours::transparentBlack, 0, height, false);
-    g.setGradientFill(gradient);
-    g.fillPath(spectrumPath);
 }
 
-void SpectrumAnalyzer::resized()
-{
-    // 現在は内部コンポーネントを持たないため空
-}
-
-float SpectrumAnalyzer::mapToLogX(float freqHz, float width) const
-{
-    const float minFreq = 20.0f;
-    const float maxFreq = 22050.0f;
-
-    float f = juce::jlimit(minFreq, maxFreq, freqHz);
-    float minLog = std::log10(minFreq);
-    float maxLog = std::log10(maxFreq);
-    float currentLog = std::log10(f);
-
-    return width * ((currentLog - minLog) / (maxLog - minLog));
-}
-
-float SpectrumAnalyzer::mapToLogY(float magnitude, float height) const
-{
-    const float minDB = -96.0f;
-    const float maxDB = 0.0f;
-
-    // 振幅をデシベルに変換（下限 -96dB）
-    float db = juce::Decibels::gainToDecibels(magnitude, minDB);
-    db = juce::jlimit(minDB, maxDB, db);
-
-    // Y軸は上が0、下がheightになるため反転させる
-    return height * (1.0f - ((db - minDB) / (maxDB - minDB)));
-}
-
-float SpectrumAnalyzer::getBarkCenterFreq(int barkIndex) const
-{
-    // Bark 0~23 に対する概算の代表周波数テーブル
-    static const float barkFreqs[24] = {
-        50, 150, 250, 350, 450, 570, 700, 840, 1000, 1170, 1370, 1600,
-        1850, 2150, 2500, 2900, 3400, 4000, 4800, 5800, 7000, 8500, 10500, 13500
-    };
-    if (barkIndex < 0) return 20.0f;
-    if (barkIndex > 23) return 20000.0f;
-    return barkFreqs[barkIndex];
-}
+void SpectrumAnalyzer::resized() {}

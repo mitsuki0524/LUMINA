@@ -4,138 +4,159 @@
 LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
+    // カスタムLookAndFeelの適用
+    setLookAndFeel(&customLookAndFeel);
+
     addAndMakeVisible(spectrumAnalyzer);
     addAndMakeVisible(grMeter);
 
     auto setupSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
         addAndMakeVisible(s);
 
         l.setText(name, juce::dontSendNotification);
         l.setJustificationType(juce::Justification::centred);
-        l.attachToComponent(&s, false);
+        l.setFont(13.0f);
         addAndMakeVisible(l);
         };
 
-    setupSlider(thresholdSlider, thresholdLabel, "Threshold");
-    setupSlider(depthSlider, depthLabel, "Depth");
-    setupSlider(attackSlider, attackLabel, "Attack");
-    setupSlider(releaseSlider, releaseLabel, "Release");
+    setupSlider(crossSliders[0], crossLabels[0], "Cross 1");
+    setupSlider(crossSliders[1], crossLabels[1], "Cross 2");
+    crossAttachments[0] = std::make_unique<SliderAttachment>(processor.apvts, "CROSS_1", crossSliders[0]);
+    crossAttachments[1] = std::make_unique<SliderAttachment>(processor.apvts, "CROSS_2", crossSliders[1]);
+
+    juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
+    juce::StringArray paramNames = { "THRESH", "DEPTH", "TONAL", "TRANS" };
+    juce::StringArray labelNames = { "Threshold", "Depth", "Tonal", "Transient" };
+    juce::StringArray titles = { "LOW BAND", "MID BAND", "HIGH BAND" };
+
+    for (int b = 0; b < 3; ++b) {
+        bandTitles[b].setText(titles[b], juce::dontSendNotification);
+        bandTitles[b].setJustificationType(juce::Justification::centred);
+        bandTitles[b].setFont(juce::Font(16.0f, juce::Font::bold));
+        addAndMakeVisible(bandTitles[b]);
+
+        for (int p = 0; p < 4; ++p) {
+            setupSlider(bandSliders[b][p], bandLabels[b][p], labelNames[p]);
+            bandAttachments[b][p] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + paramNames[p], bandSliders[b][p]);
+        }
+
+        bandButtons[b][0].setButtonText("Solo");
+        bandButtons[b][1].setButtonText("Delta");
+        addAndMakeVisible(bandButtons[b][0]);
+        addAndMakeVisible(bandButtons[b][1]);
+
+        bandButtonAttachments[b][0] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "SOLO", bandButtons[b][0]);
+        bandButtonAttachments[b][1] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "DELTA", bandButtons[b][1]);
+    }
 
     msModeButton.setButtonText("M/S Mode");
     addAndMakeVisible(msModeButton);
-
-    linearPhaseButton.setButtonText("Linear Phase");
-    addAndMakeVisible(linearPhaseButton);
-
-    // Delta Listen ボタンのセットアップ
-    deltaListenButton.setButtonText("Delta Listen");
-    deltaListenButton.setClickingTogglesState(true);
-    deltaListenButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::orange); // プロ仕様の警告色
-    addAndMakeVisible(deltaListenButton);
-
-    thresholdAttachment = std::make_unique<SliderAttachment>(processor.apvts, "THRESHOLD", thresholdSlider);
-    depthAttachment = std::make_unique<SliderAttachment>(processor.apvts, "DEPTH", depthSlider);
-    attackAttachment = std::make_unique<SliderAttachment>(processor.apvts, "ATTACK", attackSlider);
-    releaseAttachment = std::make_unique<SliderAttachment>(processor.apvts, "RELEASE", releaseSlider);
     msModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "MS_MODE", msModeButton);
-    linearPhaseAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "LINEAR_PHASE", linearPhaseButton);
 
-    // Delta Listen のアタッチメント
-    deltaListenAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "LISTEN_MODE", deltaListenButton);
-
-    setSize(600, 450);
+    // 余裕を持ったウィンドウサイズ
+    setSize(960, 750);
     startTimerHz(30);
 }
 
 LUMINAEditor::~LUMINAEditor()
 {
     stopTimer();
+    setLookAndFeel(nullptr); // メモリリーク防止のため必須
 }
 
 void LUMINAEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff121212));
-
-    auto bounds = getLocalBounds();
-    auto visualizerArea = bounds.removeFromTop(static_cast<int>(bounds.getHeight() * 0.6f));
-
-    g.setColour(juce::Colours::grey.withAlpha(0.2f));
-    g.drawHorizontalLine(visualizerArea.getBottom(), 0.0f, static_cast<float>(getWidth()));
-
-    float ledX = static_cast<float>(getWidth()) - 30.0f;
-    float ledY = static_cast<float>(getHeight()) - 30.0f;
-    float ledSize = 14.0f;
-
-    g.setColour(juce::Colour(0xff2A2A2A));
-    g.fillEllipse(ledX, ledY, ledSize, ledSize);
-
-    if (onsetGlow > 0.0f)
-    {
-        g.setColour(juce::Colours::orange.withAlpha(onsetGlow));
-        g.fillEllipse(ledX, ledY, ledSize, ledSize);
-
-        g.setColour(juce::Colours::orange.withAlpha(onsetGlow * 0.4f));
-        g.fillEllipse(ledX - 3.0f, ledY - 3.0f, ledSize + 6.0f, ledSize + 6.0f);
-    }
-
-    g.setColour(juce::Colours::white.withAlpha(0.6f));
-    g.setFont(14.0f);
-    g.drawText("Transient Protect", static_cast<int>(ledX - 130.0f), static_cast<int>(ledY), 120, static_cast<int>(ledSize), juce::Justification::centredRight, false);
+    g.fillAll(findColour(juce::ResizableWindow::backgroundColourId));
 }
 
 void LUMINAEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    auto visualizerArea = bounds.removeFromTop(static_cast<int>(bounds.getHeight() * 0.6f));
-    spectrumAnalyzer.setBounds(visualizerArea.reduced(10));
-    grMeter.setBounds(visualizerArea.reduced(10));
+    // 上部: アナライザー (高さ 300px)
+    auto visArea = bounds.removeFromTop(300);
+    spectrumAnalyzer.setBounds(visArea.reduced(10));
+    grMeter.setBounds(visArea.reduced(10));
 
-    auto controlArea = bounds.reduced(10);
-    auto sliderArea = controlArea.removeFromTop(static_cast<int>(controlArea.getHeight() * 0.7f));
-    auto knobWidth = sliderArea.getWidth() / 4;
+    auto uiArea = bounds.reduced(15);
 
-    thresholdSlider.setBounds(sliderArea.removeFromLeft(knobWidth).reduced(5));
-    depthSlider.setBounds(sliderArea.removeFromLeft(knobWidth).reduced(5));
-    attackSlider.setBounds(sliderArea.removeFromLeft(knobWidth).reduced(5));
-    releaseSlider.setBounds(sliderArea.removeFromLeft(knobWidth).reduced(5));
+    // 中段: クロスオーバーとM/S (高さ 80px)
+    auto globalRow = uiArea.removeFromTop(80);
 
-    auto buttonArea = controlArea;
-    msModeButton.setBounds(buttonArea.removeFromLeft(100).reduced(2));
-    linearPhaseButton.setBounds(buttonArea.removeFromLeft(120).reduced(2));
+    auto msArea = globalRow.removeFromLeft(120);
+    msModeButton.setBounds(msArea.withSizeKeepingCentre(100, 30));
 
-    // Delta Listen ボタンの配置
-    deltaListenButton.setBounds(buttonArea.removeFromLeft(120).reduced(2));
+    globalRow.reduce(100, 0); // 中央に寄せるための余白
+    auto cross1Area = globalRow.removeFromLeft(globalRow.getWidth() / 2);
+    auto cross2Area = globalRow;
+
+    crossLabels[0].setBounds(cross1Area.removeFromTop(20));
+    crossSliders[0].setBounds(cross1Area);
+
+    crossLabels[1].setBounds(cross2Area.removeFromTop(20));
+    crossSliders[1].setBounds(cross2Area);
+
+    uiArea.removeFromTop(10); // パネルとの間の余白
+
+    // 下段: 3バンドパネル (残りの空間)
+    int panelWidth = uiArea.getWidth() / 3;
+
+    for (int b = 0; b < 3; ++b) {
+        auto panelBounds = uiArea.removeFromLeft(panelWidth).reduced(8); // 各パネル間の隙間
+
+        bandTitles[b].setBounds(panelBounds.removeFromTop(25));
+        panelBounds.removeFromTop(10); // タイトル下の余白
+
+        auto btnRow = panelBounds.removeFromTop(30);
+        bandButtons[b][0].setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(5, 0));
+        bandButtons[b][1].setBounds(btnRow.reduced(5, 0));
+
+        panelBounds.removeFromTop(20);
+
+        // ノブを 2x2 グリッドで配置
+        auto topKnobRow = panelBounds.removeFromTop(90);
+        auto threshArea = topKnobRow.removeFromLeft(topKnobRow.getWidth() / 2);
+        auto depthArea = topKnobRow;
+
+        bandLabels[b][0].setBounds(threshArea.removeFromTop(20));
+        bandSliders[b][0].setBounds(threshArea);
+
+        bandLabels[b][1].setBounds(depthArea.removeFromTop(20));
+        bandSliders[b][1].setBounds(depthArea);
+
+        panelBounds.removeFromTop(10);
+
+        auto botKnobRow = panelBounds.removeFromTop(90);
+        auto tonalArea = botKnobRow.removeFromLeft(botKnobRow.getWidth() / 2);
+        auto transArea = botKnobRow;
+
+        bandLabels[b][2].setBounds(tonalArea.removeFromTop(20));
+        bandSliders[b][2].setBounds(tonalArea);
+
+        bandLabels[b][3].setBounds(transArea.removeFromTop(20));
+        bandSliders[b][3].setBounds(transArea);
+    }
 }
 
 void LUMINAEditor::timerCallback()
 {
+    // クロスオーバー値をプロセッサから取得してアナライザーに渡す
+    float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
+    float c2 = processor.apvts.getRawParameterValue("CROSS_2")->load();
+    spectrumAnalyzer.setCrossovers(c1, c2);
+
     AnalysisFrame frame;
     bool hasNewData = false;
 
-    while (processor.analysisFifo.pop(frame))
-    {
+    while (processor.analysisFifo.pop(frame)) {
         latestFrame = frame;
         hasNewData = true;
     }
 
-    if (hasNewData)
-    {
+    if (hasNewData) {
         spectrumAnalyzer.updateFrame(latestFrame);
-        grMeter.updateFrame(latestFrame);
-
-        if (latestFrame.isOnset)
-        {
-            onsetGlow = 1.0f;
-        }
-        else
-        {
-            onsetGlow -= 0.1f;
-            if (onsetGlow < 0.0f) onsetGlow = 0.0f;
-        }
-
         repaint();
     }
 }

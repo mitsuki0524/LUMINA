@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.22)
-
 project(LUMINA VERSION 1.0.0 LANGUAGES C CXX)
 
 # VST3の互換エラー回避
@@ -18,18 +17,18 @@ add_subdirectory(${JUCE_DIR} build_juce)
 # 3. プラグインの定義 (LUMINA向けにエフェクト仕様へ変更)
 juce_add_plugin(LUMINA
     COMPANY_NAME "OTODESK"
-    IS_SYNTH FALSE                  # エフェクトなのでFALSE
-    NEEDS_MIDI_INPUT FALSE          # MIDI入力は不要
+    IS_SYNTH FALSE                  
+    NEEDS_MIDI_INPUT FALSE          
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE 
     VST3_AUTO_MANIFEST FALSE
     PLUGIN_MANUFACTURER_CODE "Otdk"
-    PLUGIN_CODE "Lumn"              # 固有の4文字コード
+    PLUGIN_CODE "Lumn"              
     FORMATS VST3 Standalone
     PRODUCT_NAME "Lumina"
-    CHANNEL_CONFIGS 2,2             # ステレオ入力 -> ステレオ出力
+    CHANNEL_CONFIGS 2,2             
 )
 
 # 4. コンパイルオプション（SIMD最適化と文字コード設定）
@@ -48,8 +47,6 @@ target_sources(LUMINA PRIVATE
     Source/PluginEditor.h
 
     # DSP Group
-    
-    
     Source/DSP/HPSSEngine.cpp
     Source/DSP/HPSSEngine.h
     Source/DSP/MaskingModel.cpp
@@ -58,6 +55,8 @@ target_sources(LUMINA PRIVATE
     Source/DSP/OnsetDetector.h
     Source/DSP/MSEncoder.cpp
     Source/DSP/MSEncoder.h
+    Source/DSP/SpectralEngine.h
+    Source/DSP/SpectralEngine.cpp
 
     # GUI Group
     Source/GUI/SpectrumAnalyzer.cpp
@@ -65,13 +64,16 @@ target_sources(LUMINA PRIVATE
     Source/GUI/GRMeter.cpp
     Source/GUI/GRMeter.h
     Source/GUI/AnalysisFifo.h
- "Source/DSP/SpectralEngine.h" "Source/DSP/SpectralEngine.cpp")
+    Source/GUI/AbletonLookAndFeel.h
+)
 
 # 6. インクルードパス (ディレクトリ階層の指定)
 target_include_directories(LUMINA PRIVATE
     Source
     Source/DSP
     Source/GUI
+    # ⚡ IntelliSenseのエラーを消すための明示的パス
+    ${CMAKE_CURRENT_BINARY_DIR}/LUMINA_artefacts/JuceLibraryCode
 )
 
 # 7. JUCEモジュールのリンク
@@ -89,6 +91,6 @@ target_link_libraries(LUMINA PRIVATE
 # 8. JUCE 8 固有の設定
 juce_generate_juce_header(LUMINA)
 
-if(WIN32)
+if(WIN32)    
     target_compile_definitions(LUMINA PRIVATE JUCE_DIRECT2D=1)
 endif()

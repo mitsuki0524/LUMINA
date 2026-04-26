@@ -1,7 +1,18 @@
 #ifndef LUMINA_PLUGINPROCESSOR_H
 #define LUMINA_PLUGINPROCESSOR_H
 
-#include <JuceHeader.h>
+// JuceHeader.h を直接モジュールと標準ライブラリに置き換え
+#include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
+#include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+#include <vector>
+#include <array>
+#include <memory>
+
+#include "DSP/SpectralEngine.h"
 #include "DSP/SpectralEngine.h"
 #include "DSP/HPSSEngine.h"
 #include "DSP/MaskingModel.h"
@@ -52,16 +63,23 @@ private:
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
-    // 解析モジュールへ渡すためのワークスペース群
-    std::array<std::vector<float>, 2> powerWorkspaces; // ⚡追加: パワースペクトル用
+    std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
 
     std::vector<int> binToBarkMap;
-
     double currentSampleRate = 44100.0;
+
+    struct BandParams {
+        float threshold;
+        float depth;
+        float tonalShift;
+        float transShift;
+        bool isSolo;
+        bool isDelta;
+    };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAProcessor)
 };
 
-#endif // LUMINA_PLUGINPROCESSOR_H
+#endif
