@@ -36,6 +36,9 @@ private:
     juce::ToggleButton msModeButton;
     juce::ToggleButton autoLevelButton;
 
+    juce::Label autoLevelValueLabel;     // ⚡ 追加: 補正値のリアルタイム表示
+    juce::TextButton autoLevelCommitBtn; // ⚡ 追加: Commitボタン
+
     juce::ComboBox autoBandTimeCombo;    // ⚡ 時間設定
     juce::TextButton autoBandButton;
     juce::ProgressBar autoBandProgress;

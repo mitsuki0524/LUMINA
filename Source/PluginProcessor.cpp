@@ -323,7 +323,9 @@ void LUMINAProcessor::handleAutoBandResult()
         float c2 = analyzerCore.getProposedCross2();
         apvts.getParameter("CROSS_1")->setValueNotifyingHost(apvts.getParameter("CROSS_1")->convertTo0to1(c1));
         apvts.getParameter("CROSS_2")->setValueNotifyingHost(apvts.getParameter("CROSS_2")->convertTo0to1(c2));
-        apvts.getRawParameterValue("AUTO_BAND")->store(0.0f);
+
+        apvts.getParameter("AUTO_BAND")->setValueNotifyingHost(0.0f); // ボタンの見た目を戻す
+        analyzerCore.resetToIdle(); // ⚡ 修正: パラメータ書き込み直後にIdleへ戻し、手動操作の乗っ取りを防ぐ
     }
 }
 

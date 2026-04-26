@@ -163,6 +163,12 @@ void AnalyzerCore::processAudioBlock(const float* const* inputChannels, float* c
     }
     currentMatchingGain.store(currentGain);
 }
+// ⚡ 追加: 解析完了後に待機状態へ戻す
+void AnalyzerCore::resetToIdle()
+{
+    autoBandState.store(State::Idle);
+    analysisProgress.store(0.0f);
+}
 
 AnalyzerCore::State AnalyzerCore::getAutoBandState() const { return autoBandState.load(); }
 float AnalyzerCore::getAutoBandProgress() const { return analysisProgress.load(); }

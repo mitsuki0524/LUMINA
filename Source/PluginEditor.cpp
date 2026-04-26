@@ -23,6 +23,31 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     addAndMakeVisible(autoLevelButton);
     autoLevelAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "AUTO_LEVEL", autoLevelButton);
 
+    // ⚡ 追加: Auto Level Commit 関連のUIセットアップ
+    addAndMakeVisible(autoLevelValueLabel);
+    autoLevelValueLabel.setJustificationType(juce::Justification::centred);
+    autoLevelValueLabel.setFont(14.0f);
+    autoLevelValueLabel.setText("Δ: 0.0 dB", juce::dontSendNotification);
+
+    autoLevelCommitBtn.setButtonText("Commit");
+    addAndMakeVisible(autoLevelCommitBtn);
+    autoLevelCommitBtn.onClick = [this] {
+        // 現在の補正ゲインを取得してdBに変換
+        float currentGain = processor.analyzerCore.getMatchingGain();
+        float deltaDB = juce::Decibels::gainToDecibels(currentGain);
+
+        // 現在の Master Out Gain に加算 (-24 ~ +24の範囲にクランプ)
+        float currentOut = processor.apvts.getRawParameterValue("MASTER_OUT")->load();
+        float newOut = juce::jlimit(-24.0f, 24.0f, currentOut + deltaDB);
+
+        if (auto* param = processor.apvts.getParameter("MASTER_OUT"))
+            param->setValueNotifyingHost(param->convertTo0to1(newOut));
+
+        // 適用したらAuto LevelをOFFにする
+        if (auto* param = processor.apvts.getParameter("AUTO_LEVEL"))
+            param->setValueNotifyingHost(0.0f);
+        };
+
     // ⚡ Auto Band Time Combo
     autoBandTimeCombo.addItemList({ "3s", "10s", "30s" }, 1);
     autoBandTimeCombo.setJustificationType(juce::Justification::centred);
@@ -230,11 +255,16 @@ void LUMINAEditor::resized()
 
     msModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
     globalRow.removeFromLeft(10);
+
+    // ⚡ 修正: Auto Level, Label, Commit を横に並べる
     autoLevelButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
+    autoLevelValueLabel.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 20));
+    autoLevelCommitBtn.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 24));
 
     auto bandBtnArea = globalRow.removeFromRight(90);
     autoBandButton.setBounds(bandBtnArea.withSizeKeepingCentre(80, 30));
     globalRow.removeFromRight(10);
+    // ...続く (autoBandProgress等の配置)
 
     autoBandProgress.setBounds(globalRow.removeFromRight(150).withSizeKeepingCentre(140, 20));
     globalRow.removeFromRight(10);
@@ -305,6 +335,16 @@ void LUMINAEditor::timerCallback()
 {
     updateAutoBandUI();
 
+    // ⚡ 追加: Auto Levelの数値表示更新
+    float matchGain = processor.analyzerCore.getMatchingGain();
+    float matchDB = juce::Decibels::gainToDecibels(matchGain);
+    juce::String sign = (matchDB >= 0.0f && matchDB > 0.05f) ? "+" : "";
+    autoLevelValueLabel.setText("Δ: " + sign + juce::String(matchDB, 1) + " dB", juce::dontSendNotification);
+
+    bool isAutoLevelOn = processor.apvts.getRawParameterValue("AUTO_LEVEL")->load() > 0.5f;
+    autoLevelCommitBtn.setEnabled(isAutoLevelOn); // ONの時だけCommit可能
+
+    // ...以下既存のコード
     float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
     float c2 = processor.apvts.getRawParameterValue("CROSS_2")->load();
     spectrumAnalyzer.setCrossovers(c1, c2);

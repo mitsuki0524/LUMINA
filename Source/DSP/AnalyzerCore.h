@@ -25,7 +25,7 @@ public:
 
     // ⚡ 再トリガーと学習時間の設定に対応
     void startAutoBand(float timeInSeconds = 3.0f);
-
+    void resetToIdle(); // ⚡ 追加: ステートを初期化してループを防ぐ
     void processSpectrumFrame(const float* currentPower, int numBins);
 
     void setAutoLevelActive(bool active);
