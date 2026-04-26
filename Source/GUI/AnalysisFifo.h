@@ -7,6 +7,8 @@ struct AnalysisFrame {
     std::array<float, 512> magnitudeSpectrum{}; // 縮小されたスペクトル表示用
     std::array<float, 24>  barkGainReduction{}; // 各Bark帯域のGR
     std::array<float, 24>  barkPower{}; // 各Bark帯域のパワー
+    // ⚡ 追加: 現在Soloになっている帯域のインデックス (-1: なし, 0: Low, 1: Mid, 2: High)
+    int activeSoloBand = -1;
     float rmsLevel = 0.0f;
     float crestFactor = 0.0f;
     float phaseCorrelation = 0.0f;

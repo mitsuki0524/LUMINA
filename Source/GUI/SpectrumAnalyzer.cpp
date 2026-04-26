@@ -128,21 +128,14 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.setColour((draggingCrossIndex == 1) ? juce::Colours::white : juce::Colours::white.withAlpha(0.4f));
     g.drawDashedLine(juce::Line<float>(xC2, 0, xC2, bounds.getHeight()), dashPattern, 2);
 
-    // --- 3バンド・マルチカラー波形の描画（塗りつぶし追加版） ---
+    // --- 波形の描画（Solo色反転対応版） ---
     if (currentFrame.magnitudeSpectrum.size() == 512)
     {
-        juce::Path pathLow, pathMid, pathHigh;
-        bool firstLow = true, firstMid = true, firstHigh = true;
+        juce::Path fullPath;
+        bool firstPoint = true;
+        float startX = 0.0f, endX = 0.0f;
 
-        float prevX = 0.0f;
-        float prevY = 0.0f;
-        float prevFreq = 0.0f;
-
-        // 塗りつぶし用に開始と終了のX座標を記録
-        float startXLow = 0.0f, endXLow = 0.0f;
-        float startXMid = 0.0f, endXMid = 0.0f;
-        float startXHigh = 0.0f, endXHigh = 0.0f;
-
+        // 1. スペクトラム全体を1つのパスとして構築
         for (size_t i = 0; i < 512; ++i)
         {
             float freq = (static_cast<float>(i) / 512.0f) * 22050.0f;
@@ -150,75 +143,72 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
             if (freq > 20000.0f) freq = 20000.0f;
 
             float x = getXFromFreq(freq, bounds.getWidth());
-
             float mag = currentFrame.magnitudeSpectrum[i];
             float db = juce::Decibels::gainToDecibels(mag, -80.0f);
             float y = juce::jmap(db, -80.0f, 0.0f, bounds.getHeight(), 0.0f);
 
-            if (freq <= cross1) {
-                if (firstLow) { pathLow.startNewSubPath(x, y); startXLow = x; firstLow = false; }
-                else { pathLow.lineTo(x, y); }
-                endXLow = x;
-            }
-            else if (freq <= cross2) {
-                if (prevFreq <= cross1 && !firstLow) {
-                    pathLow.lineTo(x, y);
-                    endXLow = x;
-                    pathMid.startNewSubPath(prevX, prevY);
-                    startXMid = prevX;
-                    pathMid.lineTo(x, y);
-                    firstMid = false;
-                }
-                else {
-                    if (firstMid) { pathMid.startNewSubPath(x, y); startXMid = x; firstMid = false; }
-                    else { pathMid.lineTo(x, y); }
-                }
-                endXMid = x;
+            if (firstPoint) {
+                fullPath.startNewSubPath(x, y);
+                startX = x;
+                firstPoint = false;
             }
             else {
-                if (prevFreq <= cross2 && !firstMid) {
-                    pathMid.lineTo(x, y);
-                    endXMid = x;
-                    pathHigh.startNewSubPath(prevX, prevY);
-                    startXHigh = prevX;
-                    pathHigh.lineTo(x, y);
-                    firstHigh = false;
-                }
-                else {
-                    if (firstHigh) { pathHigh.startNewSubPath(x, y); startXHigh = x; firstHigh = false; }
-                    else { pathHigh.lineTo(x, y); }
-                }
-                endXHigh = x;
+                fullPath.lineTo(x, y);
             }
-
-            prevX = x;
-            prevY = y;
-            prevFreq = freq;
+            endX = x;
         }
 
-        // --- 塗りつぶし処理 ---
-        auto fillPath = [&](juce::Path p, float startX, float endX, juce::Colour color) {
-            if (p.isEmpty()) return;
-            p.lineTo(endX, bounds.getHeight());
-            p.lineTo(startX, bounds.getHeight());
-            p.closeSubPath();
-            g.setColour(color.withAlpha(0.25f)); // 半透明で塗りつぶし
-            g.fillPath(p);
-            };
+        // 塗りつぶし用に、底辺を閉じたパスを作成
+        juce::Path closedPath = fullPath;
+        closedPath.lineTo(endX, bounds.getHeight());
+        closedPath.lineTo(startX, bounds.getHeight());
+        closedPath.closeSubPath();
 
-        fillPath(pathLow, startXLow, endXLow, juce::Colour::fromString("FF00E5FF"));
-        fillPath(pathMid, startXMid, endXMid, juce::Colour::fromString("FFFF764D"));
-        fillPath(pathHigh, startXHigh, endXHigh, juce::Colour::fromString("FFFF00FF"));
+        // バンドカラーの定義
+        auto colorLow = juce::Colour::fromString("FF00E5FF");
+        auto colorMid = juce::Colour::fromString("FFFF764D");
+        auto colorHigh = juce::Colour::fromString("FFFF00FF");
 
-        // --- ストローク（線）処理 ---
-        g.setColour(juce::Colour::fromString("FF00E5FF")); // Low (Bright Cyan)
-        g.strokePath(pathLow, juce::PathStrokeType(2.0f));
+        // 2. Solo状態に応じた描画の分岐
+        if (currentFrame.activeSoloBand == 0) {
+            // LowがSolo: 全体をシアンで描画
+            g.setColour(colorLow.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorLow); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+        }
+        else if (currentFrame.activeSoloBand == 1) {
+            // MidがSolo: 全体をオレンジで描画
+            g.setColour(colorMid.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorMid); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+        }
+        else if (currentFrame.activeSoloBand == 2) {
+            // HighがSolo: 全体をマゼンタで描画
+            g.setColour(colorHigh.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorHigh); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+        }
+        else {
+            // 通常時: クリッピング領域（表示制限）を使って3色に分割描画
 
-        g.setColour(juce::Colour::fromString("FFFF764D")); // Mid (Ableton Orange)
-        g.strokePath(pathMid, juce::PathStrokeType(2.0f));
+            // Low Zone (画面左端 から xC1 まで)
+            g.saveState();
+            g.reduceClipRegion(0, 0, static_cast<int>(xC1), static_cast<int>(bounds.getHeight()));
+            g.setColour(colorLow.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorLow); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+            g.restoreState();
 
-        g.setColour(juce::Colour::fromString("FFFF00FF")); // High (Bright Magenta)
-        g.strokePath(pathHigh, juce::PathStrokeType(2.0f));
+            // Mid Zone (xC1 から xC2 まで)
+            g.saveState();
+            g.reduceClipRegion(static_cast<int>(xC1), 0, static_cast<int>(xC2 - xC1), static_cast<int>(bounds.getHeight()));
+            g.setColour(colorMid.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorMid); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+            g.restoreState();
+
+            // High Zone (xC2 から 画面右端 まで)
+            g.saveState();
+            g.reduceClipRegion(static_cast<int>(xC2), 0, static_cast<int>(bounds.getWidth() - xC2), static_cast<int>(bounds.getHeight()));
+            g.setColour(colorHigh.withAlpha(0.25f)); g.fillPath(closedPath);
+            g.setColour(colorHigh); g.strokePath(fullPath, juce::PathStrokeType(2.0f));
+            g.restoreState();
+        }
     }
 
     // --- ドラッグ中のツールチップ（周波数表示） ---
@@ -227,7 +217,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         juce::String freqStr = juce::String(currentDragFreq, 0) + " Hz";
 
         juce::Rectangle<float> tooltipBounds(drawX + 8.0f, 10.0f, 60.0f, 20.0f);
-        // 右端にはみ出る場合は左側に表示
         if (tooltipBounds.getRight() > bounds.getWidth()) {
             tooltipBounds.setX(drawX - 68.0f);
         }

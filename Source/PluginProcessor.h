@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginProcessor.h
+// ==========================================
 #ifndef LUMINA_PLUGINPROCESSOR_H
 #define LUMINA_PLUGINPROCESSOR_H
 
@@ -21,7 +24,7 @@ struct BandParams {
     float depth;
     float tonalShift;
     float transShift;
-    bool isBypass; // ⚡
+    bool isBypass;
     bool isSolo;
     bool isDelta;
 };
@@ -68,6 +71,7 @@ private:
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
+    // ⚡ メモリのフラグメンテーションを防ぐため、ここでも動的割り当てを考慮
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
@@ -76,6 +80,7 @@ private:
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;
+    int mFftSize = 4096; // ⚡ 現在のFFTサイズを保持
 
     struct ParamCache {
         std::atomic<float>* cross1 = nullptr;
@@ -84,7 +89,6 @@ private:
         std::atomic<float>* autoLevel = nullptr;
         std::atomic<float>* autoBandTrigger = nullptr;
 
-        // ⚡ 新規マスターコントロール
         std::atomic<float>* masterInGain = nullptr;
         std::atomic<float>* masterOutGain = nullptr;
         std::atomic<float>* masterDryWet = nullptr;
@@ -99,7 +103,7 @@ private:
             std::atomic<float>* depthS = nullptr;
             std::atomic<float>* tonalS = nullptr;
             std::atomic<float>* transS = nullptr;
-            std::atomic<float>* bypass = nullptr; // ⚡
+            std::atomic<float>* bypass = nullptr;
             std::atomic<float>* solo = nullptr;
             std::atomic<float>* delta = nullptr;
             std::atomic<float>* link = nullptr;
@@ -112,4 +116,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAProcessor)
 };
 
-#endif
+#endif // LUMINA_PLUGINPROCESSOR_H

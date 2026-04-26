@@ -339,7 +339,7 @@ void LUMINAEditor::timerCallback()
     float matchGain = processor.analyzerCore.getMatchingGain();
     float matchDB = juce::Decibels::gainToDecibels(matchGain);
     juce::String sign = (matchDB >= 0.0f && matchDB > 0.05f) ? "+" : "";
-    autoLevelValueLabel.setText("Δ: " + sign + juce::String(matchDB, 1) + " dB", juce::dontSendNotification);
+    autoLevelValueLabel.setText("Diff: " + sign + juce::String(matchDB, 1) + " dB", juce::dontSendNotification);
 
     bool isAutoLevelOn = processor.apvts.getRawParameterValue("AUTO_LEVEL")->load() > 0.5f;
     autoLevelCommitBtn.setEnabled(isAutoLevelOn); // ONの時だけCommit可能

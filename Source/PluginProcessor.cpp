@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginProcessor.cpp
+// ==========================================
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -28,7 +31,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ "MS_MODE", 1 }, "M/S Mode", false));
 
-    // --- Global & Master Controls ⚡ ---
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "MASTER_IN", 1 }, "Input Gain", -24.0f, 24.0f, 0.0f));
 
@@ -74,7 +76,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "TRANS_S", 1 }, nm + "Trans S", -24.0f, 24.0f, 0.0f));
 
-        // ⚡ Bypass 追加
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{ pfx + "BYPASS", 1 }, nm + "Bypass", false));
         params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -96,7 +97,6 @@ void LUMINAProcessor::updateParamCache()
     cache.autoLevel = apvts.getRawParameterValue("AUTO_LEVEL");
     cache.autoBandTrigger = apvts.getRawParameterValue("AUTO_BAND");
 
-    // ⚡ マスターコントロール
     cache.masterInGain = apvts.getRawParameterValue("MASTER_IN");
     cache.masterOutGain = apvts.getRawParameterValue("MASTER_OUT");
     cache.masterDryWet = apvts.getRawParameterValue("MASTER_WET");
@@ -113,7 +113,7 @@ void LUMINAProcessor::updateParamCache()
         cache.bands[i].tonalS = apvts.getRawParameterValue(prefixes[i] + "TONAL_S");
         cache.bands[i].transS = apvts.getRawParameterValue(prefixes[i] + "TRANS_S");
 
-        cache.bands[i].bypass = apvts.getRawParameterValue(prefixes[i] + "BYPASS"); // ⚡
+        cache.bands[i].bypass = apvts.getRawParameterValue(prefixes[i] + "BYPASS");
         cache.bands[i].solo = apvts.getRawParameterValue(prefixes[i] + "SOLO");
         cache.bands[i].delta = apvts.getRawParameterValue(prefixes[i] + "DELTA");
         cache.bands[i].link = apvts.getRawParameterValue(prefixes[i] + "LINK");
@@ -133,16 +133,24 @@ void LUMINAProcessor::changeProgramName(int index, const juce::String& newName) 
 
 void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    // ⚡ 修正: 存在しないAPI呼び出しを削除しました。
+    // デノーマル対策は processBlock 内の ScopedNoDenormals だけで完璧に機能します。
+
     mSampleRate = sampleRate;
-    const int fftSize = 4096;
-    const int numBins = fftSize / 2 + 1;
-    const int hopSize = 1024;
+
+    // サンプルレートに応じたFFTサイズの動的切り替え
+    if (sampleRate >= 176400.0)      mFftSize = 16384;
+    else if (sampleRate >= 88200.0)  mFftSize = 8192;
+    else                             mFftSize = 4096;
+
+    const int numBins = mFftSize / 2 + 1;
+    const int hopSize = mFftSize / 4; // 75% オーバーラップ
 
     inputCopyBuffer.setSize(2, samplesPerBlock);
-    analyzerCore.prepare(sampleRate, fftSize, hopSize);
+    analyzerCore.prepare(sampleRate, mFftSize, hopSize);
 
     binToBarkMap.assign(static_cast<size_t>(numBins), 0);
-    const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+    const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(mFftSize);
     for (int i = 0; i < numBins; ++i)
     {
         float hz = static_cast<float>(i) * binFreq;
@@ -153,16 +161,16 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     for (int ch = 0; ch < 2; ++ch)
     {
-        spectralEngines[ch].prepare(sampleRate, fftSize, 0.75f);
+        spectralEngines[ch].prepare(sampleRate, mFftSize, 0.75f);
         hpssEngines[ch].prepare(numBins, 17, 31);
-        maskingModels[ch].prepare(sampleRate, fftSize);
+        maskingModels[ch].prepare(sampleRate, mFftSize);
         onsetDetectors[ch].prepare(sampleRate, numBins);
 
         powerWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         tonalMaskWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
         binGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
 
-        spectralEngines[ch].setProcessingCallback([this, ch, fftSize, numBins](float* magnitudes, int nBins)
+        spectralEngines[ch].setProcessingCallback([this, ch, numBins](float* magnitudes, int nBins)
             {
                 auto& hpss = hpssEngines[ch];
                 auto& onset = onsetDetectors[ch];
@@ -171,7 +179,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 float* tonalMask = tonalMaskWorkspaces[ch].data();
                 float* binGains = binGainsWorkspaces[ch].data();
 
-                float normFactor = 1.0f / static_cast<float>(fftSize);
+                float normFactor = 1.0f / static_cast<float>(mFftSize);
                 juce::FloatVectorOperations::multiply(power, magnitudes, normFactor, nBins);
                 juce::FloatVectorOperations::multiply(power, power, magnitudes, nBins);
                 juce::FloatVectorOperations::multiply(power, power, normFactor, nBins);
@@ -189,7 +197,8 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 const float cross1 = cache.cross1->load();
                 const float cross2 = cache.cross2->load();
 
-                std::array<BandParams, 3> bands;
+                // ⚡ 修正: 構造体配列をゼロクリア初期化
+                std::array<BandParams, 3> bands{};
                 bool anySolo = false;
 
                 for (int b = 0; b < 3; ++b) {
@@ -206,13 +215,13 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalM->load());
                         bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transM->load());
                     }
-                    bands[b].isBypass = cache.bands[b].bypass->load() > 0.5f; // ⚡
+                    bands[b].isBypass = cache.bands[b].bypass->load() > 0.5f;
                     bands[b].isSolo = cache.bands[b].solo->load() > 0.5f;
                     bands[b].isDelta = cache.bands[b].delta->load() > 0.5f;
                     if (bands[b].isSolo) anySolo = true;
                 }
 
-                const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(fftSize);
+                const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
                 const float transRatio = 1.414f;
                 std::array<float, 24> barkGR;
                 barkGR.fill(1.0f);
@@ -223,11 +232,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    float pureReductionGains[3];
-                    float targetGains[3];
+                    // ⚡ 修正: 生配列を {1.0f, 1.0f, 1.0f} で初期化
+                    float pureReductionGains[3] = { 1.0f, 1.0f, 1.0f };
+                    float targetGains[3] = { 1.0f, 1.0f, 1.0f };
 
                     for (int b = 0; b < 3; ++b) {
-                        // ⚡ Bypass時はゲイン変動を1.0に固定
                         if (bands[b].isBypass) {
                             pureReductionGains[b] = 1.0f;
                             targetGains[b] = 1.0f;
@@ -295,8 +304,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     frame.isOnset = isOnset;
                     frame.barkPower = barkPower;
                     for (int i = 0; i < 24; ++i) frame.barkGainReduction[i] = barkGR[i];
-                    const int binsPerUI = nBins / 512;
-                    for (int i = 0; i < 512; ++i) {
+
+                    // ⚡ 追加: Solo状態の判定と格納
+                    int soloBandIdx = -1;
+                    if (bands[0].isSolo) soloBandIdx = 0;
+                    else if (bands[1].isSolo) soloBandIdx = 1;
+                    else if (bands[2].isSolo) soloBandIdx = 2;
+                    frame.activeSoloBand = soloBandIdx;
+
+                    const int uiBins = 512;
+                    const int binsPerUI = nBins / uiBins;
+                    for (int i = 0; i < uiBins; ++i) {
                         float sumP = 0.0f;
                         int startIdx = i * binsPerUI;
                         for (int j = 0; j < binsPerUI; ++j) {
@@ -313,6 +331,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 }
             });
     }
+
     setLatencySamples(spectralEngines[0].getLatencySamples());
 }
 
@@ -323,9 +342,8 @@ void LUMINAProcessor::handleAutoBandResult()
         float c2 = analyzerCore.getProposedCross2();
         apvts.getParameter("CROSS_1")->setValueNotifyingHost(apvts.getParameter("CROSS_1")->convertTo0to1(c1));
         apvts.getParameter("CROSS_2")->setValueNotifyingHost(apvts.getParameter("CROSS_2")->convertTo0to1(c2));
-
-        apvts.getParameter("AUTO_BAND")->setValueNotifyingHost(0.0f); // ボタンの見た目を戻す
-        analyzerCore.resetToIdle(); // ⚡ 修正: パラメータ書き込み直後にIdleへ戻し、手動操作の乗っ取りを防ぐ
+        apvts.getRawParameterValue("AUTO_BAND")->store(0.0f);
+        analyzerCore.resetToIdle();
     }
 }
 
@@ -344,16 +362,13 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    // ⚡ Input Gain の適用
     float inGain = juce::Decibels::decibelsToGain(cache.masterInGain->load());
     buffer.applyGain(inGain);
 
-    // ⚡ Auto Level と Dry/Wet 用に原音をコピー
     for (int ch = 0; ch < numChannels; ++ch) {
         inputCopyBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
     }
 
-    // ⚡ Auto Band 再トリガー機能 (Doneからでも再開可能)
     if (cache.autoBandTrigger->load() > 0.5f) {
         auto state = analyzerCore.getAutoBandState();
         if (state == AnalyzerCore::State::Idle || state == AnalyzerCore::State::Done) {
@@ -373,13 +388,11 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     if (isMsMode) msEncoder.decodeMidSide(buffer);
 
-    // ⚡ Auto Level の適用
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),
         buffer.getArrayOfWritePointers(),
         numChannels, numSamples);
 
-    // ⚡ Dry/Wet ブレンド処理
     float wetRatio = cache.masterDryWet->load();
     if (wetRatio < 1.0f) {
         for (int ch = 0; ch < numChannels; ++ch) {
@@ -391,7 +404,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         }
     }
 
-    // ⚡ Output Gain の適用
     float outGain = juce::Decibels::decibelsToGain(cache.masterOutGain->load());
     buffer.applyGain(outGain);
 }
