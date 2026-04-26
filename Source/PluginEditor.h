@@ -6,10 +6,6 @@
 #include "GUI/SpectrumAnalyzer.h"
 #include "GUI/GRMeter.h"
 
-/**
- * @class LUMINAEditor
- * @brief LUMINAプラグインのユーザーインターフェースを管理するクラス。
- */
 class LUMINAEditor : public juce::AudioProcessorEditor,
     private juce::Timer
 {
@@ -17,29 +13,24 @@ public:
     LUMINAEditor(LUMINAProcessor&);
     ~LUMINAEditor() override;
 
-    //==============================================================================
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    /**
-     * @brief タイマーによる描画更新処理（30fps）
-     */
     void timerCallback() override;
 
-    // プロセッサへの参照
     LUMINAProcessor& processor;
 
-    // --- 視覚化コンポーネント ---
     SpectrumAnalyzer spectrumAnalyzer;
-    GRMeter grMeter; // ここでの宣言が C2065 エラーの解決に必須です
+    GRMeter grMeter;
 
-    // --- GUIコントロール ---
     juce::Slider thresholdSlider, depthSlider, attackSlider, releaseSlider;
     juce::Label thresholdLabel, depthLabel, attackLabel, releaseLabel;
     juce::ToggleButton msModeButton, linearPhaseButton;
 
-    // --- パラメータ・アタッチメント ---
+    // 追加: Delta Listen ボタン
+    juce::TextButton deltaListenButton;
+
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
@@ -50,10 +41,10 @@ private:
     std::unique_ptr<ButtonAttachment> msModeAttachment;
     std::unique_ptr<ButtonAttachment> linearPhaseAttachment;
 
-    // 最新の解析データ保持用
-    AnalysisFrame latestFrame;
+    // 追加: Delta Listen のアタッチメント
+    std::unique_ptr<ButtonAttachment> deltaListenAttachment;
 
-    // LEDの明るさ管理
+    AnalysisFrame latestFrame;
     float onsetGlow = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAEditor)

@@ -1,15 +1,12 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
 LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
-    // --- コンポーネントの可視化 ---
     addAndMakeVisible(spectrumAnalyzer);
     addAndMakeVisible(grMeter);
 
-    // --- スライダーのセットアップヘルパー ---
     auto setupSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -32,7 +29,12 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     linearPhaseButton.setButtonText("Linear Phase");
     addAndMakeVisible(linearPhaseButton);
 
-    // --- APVTS との接続 ---
+    // Delta Listen ボタンのセットアップ
+    deltaListenButton.setButtonText("Delta Listen");
+    deltaListenButton.setClickingTogglesState(true);
+    deltaListenButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::orange); // プロ仕様の警告色
+    addAndMakeVisible(deltaListenButton);
+
     thresholdAttachment = std::make_unique<SliderAttachment>(processor.apvts, "THRESHOLD", thresholdSlider);
     depthAttachment = std::make_unique<SliderAttachment>(processor.apvts, "DEPTH", depthSlider);
     attackAttachment = std::make_unique<SliderAttachment>(processor.apvts, "ATTACK", attackSlider);
@@ -40,10 +42,10 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     msModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "MS_MODE", msModeButton);
     linearPhaseAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "LINEAR_PHASE", linearPhaseButton);
 
-    // ウィンドウサイズ
-    setSize(600, 450);
+    // Delta Listen のアタッチメント
+    deltaListenAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "LISTEN_MODE", deltaListenButton);
 
-    // 描画更新タイマー（30Hz）
+    setSize(600, 450);
     startTimerHz(30);
 }
 
@@ -52,20 +54,16 @@ LUMINAEditor::~LUMINAEditor()
     stopTimer();
 }
 
-//==============================================================================
 void LUMINAEditor::paint(juce::Graphics& g)
 {
-    // 背景
     g.fillAll(juce::Colour(0xff121212));
 
     auto bounds = getLocalBounds();
     auto visualizerArea = bounds.removeFromTop(static_cast<int>(bounds.getHeight() * 0.6f));
 
-    // セパレーターライン
     g.setColour(juce::Colours::grey.withAlpha(0.2f));
     g.drawHorizontalLine(visualizerArea.getBottom(), 0.0f, static_cast<float>(getWidth()));
 
-    // --- オンセット LED の描画 ---
     float ledX = static_cast<float>(getWidth()) - 30.0f;
     float ledY = static_cast<float>(getHeight()) - 30.0f;
     float ledSize = 14.0f;
@@ -91,12 +89,10 @@ void LUMINAEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // 視覚化エリア
     auto visualizerArea = bounds.removeFromTop(static_cast<int>(bounds.getHeight() * 0.6f));
     spectrumAnalyzer.setBounds(visualizerArea.reduced(10));
-    grMeter.setBounds(visualizerArea.reduced(10)); // スペクトラムと同じ位置に重ねる
+    grMeter.setBounds(visualizerArea.reduced(10));
 
-    // コントロールエリア
     auto controlArea = bounds.reduced(10);
     auto sliderArea = controlArea.removeFromTop(static_cast<int>(controlArea.getHeight() * 0.7f));
     auto knobWidth = sliderArea.getWidth() / 4;
@@ -109,6 +105,9 @@ void LUMINAEditor::resized()
     auto buttonArea = controlArea;
     msModeButton.setBounds(buttonArea.removeFromLeft(100).reduced(2));
     linearPhaseButton.setBounds(buttonArea.removeFromLeft(120).reduced(2));
+
+    // Delta Listen ボタンの配置
+    deltaListenButton.setBounds(buttonArea.removeFromLeft(120).reduced(2));
 }
 
 void LUMINAEditor::timerCallback()
@@ -116,7 +115,6 @@ void LUMINAEditor::timerCallback()
     AnalysisFrame frame;
     bool hasNewData = false;
 
-    // プロセッサの FIFO から最新データを取得
     while (processor.analysisFifo.pop(frame))
     {
         latestFrame = frame;
@@ -128,7 +126,6 @@ void LUMINAEditor::timerCallback()
         spectrumAnalyzer.updateFrame(latestFrame);
         grMeter.updateFrame(latestFrame);
 
-        // LED の発光減衰
         if (latestFrame.isOnset)
         {
             onsetGlow = 1.0f;

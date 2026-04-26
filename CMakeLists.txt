@@ -48,8 +48,8 @@ target_sources(LUMINA PRIVATE
     Source/PluginEditor.h
 
     # DSP Group
-    Source/DSP/MultiResSTFT.cpp
-    Source/DSP/MultiResSTFT.h
+    
+    
     Source/DSP/HPSSEngine.cpp
     Source/DSP/HPSSEngine.h
     Source/DSP/MaskingModel.cpp
@@ -65,7 +65,7 @@ target_sources(LUMINA PRIVATE
     Source/GUI/GRMeter.cpp
     Source/GUI/GRMeter.h
     Source/GUI/AnalysisFifo.h
-)
+ "Source/DSP/SpectralEngine.h" "Source/DSP/SpectralEngine.cpp")
 
 # 6. インクルードパス (ディレクトリ階層の指定)
 target_include_directories(LUMINA PRIVATE

@@ -2,7 +2,7 @@
 #define LUMINA_PLUGINPROCESSOR_H
 
 #include <JuceHeader.h>
-#include "DSP/MultiResSTFT.h"
+#include "DSP/SpectralEngine.h"
 #include "DSP/HPSSEngine.h"
 #include "DSP/MaskingModel.h"
 #include "DSP/OnsetDetector.h"
@@ -14,7 +14,6 @@ class LUMINAEditor;
 class LUMINAProcessor : public juce::AudioProcessor
 {
 public:
-    //==============================================================================
     LUMINAProcessor();
     ~LUMINAProcessor() override;
 
@@ -46,21 +45,23 @@ public:
     AnalysisFifo analysisFifo;
 
 private:
-    MSEncoder     msEncoder;
-    MultiResSTFT  stft;
-    HPSSEngine    hpss;
-    MaskingModel  maskingModel;
-    OnsetDetector onsetDetector;
+    MSEncoder msEncoder;
 
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gainSmooth;
+    std::array<SpectralEngine, 2> spectralEngines;
+    std::array<HPSSEngine, 2>     hpssEngines;
+    std::array<MaskingModel, 2>   maskingModels;
+    std::array<OnsetDetector, 2>  onsetDetectors;
 
-    std::vector<float> tonalMaskWorkspace;
-    std::vector<float> monoAnalysisBuffer; // 追加: ステレオ/MS解析用の合成バッファ
+    // 解析モジュールへ渡すためのワークスペース群
+    std::array<std::vector<float>, 2> powerWorkspaces; // ⚡追加: パワースペクトル用
+    std::array<std::vector<float>, 2> tonalMaskWorkspaces;
+    std::array<std::vector<float>, 2> binGainsWorkspaces;
+
+    std::vector<int> binToBarkMap;
 
     double currentSampleRate = 44100.0;
-    int    currentBlockSize = 512;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAProcessor)
 };
 
-#endif // LUMINA_PLUGINPROCESSOR_Hさい
+#endif // LUMINA_PLUGINPROCESSOR_H
