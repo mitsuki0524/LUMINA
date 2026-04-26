@@ -21,23 +21,16 @@ public:
     AnalyzerCore();
     ~AnalyzerCore() = default;
 
-    /**
-     * @brief 内部バッファの事前確保
-     * @param sampleRate サンプルレート
-     * @param fftSize FFTサイズ（例: 4096）
-     * @param hopSize ホップサイズ（例: 1024）
-     */
     void prepare(double sampleRate, int fftSize, int hopSize);
 
-    // --- Auto Band (スペクトル解析) ---
-    void startAutoBand();
+    // ⚡ 再トリガーと学習時間の設定に対応
+    void startAutoBand(float timeInSeconds = 3.0f);
+
     void processSpectrumFrame(const float* currentPower, int numBins);
 
-    // --- Auto Level (RMS波形解析＆補正) ---
     void setAutoLevelActive(bool active);
     void processAudioBlock(const float* const* inputChannels, float* const* outputChannels, int numChannels, int numSamples);
 
-    // --- GUI / Processor用スレッドセーフ・ゲッター ---
     State getAutoBandState() const;
     float getAutoBandProgress() const;
     float getProposedCross1() const;
@@ -52,7 +45,6 @@ private:
     int currentHopSize = 1024;
     int numBins = 2049;
 
-    // --- Auto Band State ---
     std::atomic<State> autoBandState{ State::Idle };
     std::atomic<float> analysisProgress{ 0.0f };
     std::atomic<float> proposedCross1{ 250.0f };
@@ -61,11 +53,9 @@ private:
     int analyzedFrames = 0;
     int targetFrames = 0;
 
-    // オーディオパスでのメモリ確保を避けるため、prepareで事前確保
     std::vector<float> accumulatedSpectrum;
     std::vector<float> smoothedSpectrum;
 
-    // --- Auto Level State ---
     std::atomic<bool> isAutoLevelActive{ false };
     std::atomic<float> currentMatchingGain{ 1.0f };
 

@@ -28,6 +28,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ "MS_MODE", 1 }, "M/S Mode", false));
 
+    // --- Global & Master Controls ⚡ ---
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "MASTER_IN", 1 }, "Input Gain", -24.0f, 24.0f, 0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "MASTER_OUT", 1 }, "Output Gain", -24.0f, 24.0f, 0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "MASTER_WET", 1 }, "Dry/Wet", 0.0f, 1.0f, 1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ "AUTO_BAND_TIME", 1 }, "Auto Band Time",
+        juce::StringArray{ "3s", "10s", "30s" }, 0));
+
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ "AUTO_LEVEL", 1 }, "Auto Level", false));
 
@@ -60,6 +74,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "TRANS_S", 1 }, nm + "Trans S", -24.0f, 24.0f, 0.0f));
 
+        // ⚡ Bypass 追加
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{ pfx + "BYPASS", 1 }, nm + "Bypass", false));
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{ pfx + "SOLO", 1 }, nm + "Solo", false));
         params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -79,6 +96,12 @@ void LUMINAProcessor::updateParamCache()
     cache.autoLevel = apvts.getRawParameterValue("AUTO_LEVEL");
     cache.autoBandTrigger = apvts.getRawParameterValue("AUTO_BAND");
 
+    // ⚡ マスターコントロール
+    cache.masterInGain = apvts.getRawParameterValue("MASTER_IN");
+    cache.masterOutGain = apvts.getRawParameterValue("MASTER_OUT");
+    cache.masterDryWet = apvts.getRawParameterValue("MASTER_WET");
+    cache.autoBandTime = apvts.getRawParameterValue("AUTO_BAND_TIME");
+
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
     for (int i = 0; i < 3; ++i) {
         cache.bands[i].threshM = apvts.getRawParameterValue(prefixes[i] + "THRESH_M");
@@ -89,6 +112,8 @@ void LUMINAProcessor::updateParamCache()
         cache.bands[i].depthS = apvts.getRawParameterValue(prefixes[i] + "DEPTH_S");
         cache.bands[i].tonalS = apvts.getRawParameterValue(prefixes[i] + "TONAL_S");
         cache.bands[i].transS = apvts.getRawParameterValue(prefixes[i] + "TRANS_S");
+
+        cache.bands[i].bypass = apvts.getRawParameterValue(prefixes[i] + "BYPASS"); // ⚡
         cache.bands[i].solo = apvts.getRawParameterValue(prefixes[i] + "SOLO");
         cache.bands[i].delta = apvts.getRawParameterValue(prefixes[i] + "DELTA");
         cache.bands[i].link = apvts.getRawParameterValue(prefixes[i] + "LINK");
@@ -181,6 +206,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalM->load());
                         bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transM->load());
                     }
+                    bands[b].isBypass = cache.bands[b].bypass->load() > 0.5f; // ⚡
                     bands[b].isSolo = cache.bands[b].solo->load() > 0.5f;
                     bands[b].isDelta = cache.bands[b].delta->load() > 0.5f;
                     if (bands[b].isSolo) anySolo = true;
@@ -201,6 +227,13 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     float targetGains[3];
 
                     for (int b = 0; b < 3; ++b) {
+                        // ⚡ Bypass時はゲイン変動を1.0に固定
+                        if (bands[b].isBypass) {
+                            pureReductionGains[b] = 1.0f;
+                            targetGains[b] = 1.0f;
+                            continue;
+                        }
+
                         float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
                         float reductionGain = 1.0f;
                         if (excess > 0.0f && !isOnset) {
@@ -307,27 +340,58 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
 
-    if (cache.autoBandTrigger->load() > 0.5f && analyzerCore.getAutoBandState() == AnalyzerCore::State::Idle)
-        analyzerCore.startAutoBand();
+    // ⚡ Input Gain の適用
+    float inGain = juce::Decibels::decibelsToGain(cache.masterInGain->load());
+    buffer.applyGain(inGain);
 
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    // ⚡ Auto Level と Dry/Wet 用に原音をコピー
+    for (int ch = 0; ch < numChannels; ++ch) {
         inputCopyBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+    }
+
+    // ⚡ Auto Band 再トリガー機能 (Doneからでも再開可能)
+    if (cache.autoBandTrigger->load() > 0.5f) {
+        auto state = analyzerCore.getAutoBandState();
+        if (state == AnalyzerCore::State::Idle || state == AnalyzerCore::State::Done) {
+            float timeChoice = cache.autoBandTime->load();
+            float timeSec = (timeChoice == 0.0f) ? 3.0f : ((timeChoice == 1.0f) ? 10.0f : 30.0f);
+            analyzerCore.startAutoBand(timeSec);
+        }
+    }
 
     const bool isMsMode = cache.msMode->load() > 0.5f;
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+    for (int ch = 0; ch < numChannels; ++ch) {
         float* data = buffer.getWritePointer(ch);
         spectralEngines[ch].process(data, data, numSamples);
     }
 
     if (isMsMode) msEncoder.decodeMidSide(buffer);
 
+    // ⚡ Auto Level の適用
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),
         buffer.getArrayOfWritePointers(),
-        buffer.getNumChannels(), numSamples);
+        numChannels, numSamples);
+
+    // ⚡ Dry/Wet ブレンド処理
+    float wetRatio = cache.masterDryWet->load();
+    if (wetRatio < 1.0f) {
+        for (int ch = 0; ch < numChannels; ++ch) {
+            const float* dryData = inputCopyBuffer.getReadPointer(ch);
+            float* wetData = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i) {
+                wetData[i] = dryData[i] * (1.0f - wetRatio) + wetData[i] * wetRatio;
+            }
+        }
+    }
+
+    // ⚡ Output Gain の適用
+    float outGain = juce::Decibels::decibelsToGain(cache.masterOutGain->load());
+    buffer.applyGain(outGain);
 }
 
 bool LUMINAProcessor::hasEditor() const { return true; }

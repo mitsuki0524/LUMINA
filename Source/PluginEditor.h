@@ -24,8 +24,6 @@ public:
 private:
     void timerCallback() override;
     void setBandTab(int bandIndex, bool showSide);
-
-    // ⚡ 追加: Auto Band のステータスに基づいてボタン表示を更新するヘルパー
     void updateAutoBandUI();
 
     LUMINAProcessor& processor;
@@ -34,18 +32,33 @@ private:
     SpectrumAnalyzer spectrumAnalyzer;
     GRMeter grMeter;
 
-    // --- Global Controls (Updated for STEP 3) ---
+    // --- Global Controls ---
     juce::ToggleButton msModeButton;
-    juce::TextButton autoBandButton;     // ⚡ Auto Band 開始ボタン
-    juce::ToggleButton autoLevelButton;  // ⚡ Auto Level トグル
-    juce::ProgressBar autoBandProgress;  // ⚡ 解析進捗バー
+    juce::ToggleButton autoLevelButton;
+
+    juce::ComboBox autoBandTimeCombo;    // ⚡ 時間設定
+    juce::TextButton autoBandButton;
+    juce::ProgressBar autoBandProgress;
+
+    // --- Master Section (Right Panel) ⚡ ---
+    juce::Label masterTitle;
+    juce::Slider masterInSlider;
+    juce::Label masterInLabel;
+    juce::Slider masterOutSlider;
+    juce::Label masterOutLabel;
+    juce::Slider masterDryWetSlider;
+    juce::Label masterDryWetLabel;
 
     // --- Band UI Components ---
     juce::Label bandTitles[3];
     juce::TextButton tabMid[3];
     juce::TextButton tabSide[3];
     juce::ToggleButton bandLink[3];
-    juce::ToggleButton bandButtons[3][2];
+
+    // ⚡ Bypass, Solo, Delta
+    juce::ToggleButton bandBypass[3];
+    juce::ToggleButton bandSolo[3];
+    juce::ToggleButton bandDelta[3];
 
     juce::Slider bandSlidersM[3][4];
     juce::Label bandLabelsM[3][4];
@@ -55,20 +68,29 @@ private:
     // --- APVTS Attachments ---
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     std::unique_ptr<ButtonAttachment> msModeAttachment;
-    std::unique_ptr<ButtonAttachment> autoBandAttachment;  // ⚡
-    std::unique_ptr<ButtonAttachment> autoLevelAttachment; // ⚡
+    std::unique_ptr<ButtonAttachment> autoLevelAttachment;
+    std::unique_ptr<ButtonAttachment> autoBandAttachment;
+    std::unique_ptr<ComboBoxAttachment> autoBandTimeAttachment; // ⚡
 
+    // Master Attachments ⚡
+    std::unique_ptr<SliderAttachment> masterInAttachment;
+    std::unique_ptr<SliderAttachment> masterOutAttachment;
+    std::unique_ptr<SliderAttachment> masterDryWetAttachment;
+
+    // Band Attachments
     std::unique_ptr<SliderAttachment> bandAttachmentsM[3][4];
     std::unique_ptr<SliderAttachment> bandAttachmentsS[3][4];
-    std::unique_ptr<ButtonAttachment> bandButtonAttachments[3][2];
+
+    std::unique_ptr<ButtonAttachment> bandBypassAttachments[3]; // ⚡
+    std::unique_ptr<ButtonAttachment> bandSoloAttachments[3];
+    std::unique_ptr<ButtonAttachment> bandDeltaAttachments[3];
     std::unique_ptr<ButtonAttachment> bandLinkAttachments[3];
 
     AnalysisFrame latestFrame{};
     bool currentTabIsSide[3] = { false, false, false };
-
-    // ⚡ プログレスバー用の共有変数
     double progressValue = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAEditor)

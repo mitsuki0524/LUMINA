@@ -16,12 +16,12 @@
 #include "DSP/AnalyzerCore.h"
 #include "GUI/AnalysisFifo.h"
 
-// ⚡ 識別子エラー回避のため、クラス外で定義
 struct BandParams {
     float threshold;
     float depth;
     float tonalShift;
     float transShift;
+    bool isBypass; // ⚡
     bool isSolo;
     bool isDelta;
 };
@@ -75,7 +75,6 @@ private:
     juce::AudioBuffer<float> inputCopyBuffer;
     std::vector<int> binToBarkMap;
 
-    // ⚡ 基底クラスとの衝突回避のため名称変更
     double mSampleRate = 44100.0;
 
     struct ParamCache {
@@ -84,6 +83,12 @@ private:
         std::atomic<float>* msMode = nullptr;
         std::atomic<float>* autoLevel = nullptr;
         std::atomic<float>* autoBandTrigger = nullptr;
+
+        // ⚡ 新規マスターコントロール
+        std::atomic<float>* masterInGain = nullptr;
+        std::atomic<float>* masterOutGain = nullptr;
+        std::atomic<float>* masterDryWet = nullptr;
+        std::atomic<float>* autoBandTime = nullptr;
 
         struct Band {
             std::atomic<float>* threshM = nullptr;
@@ -94,6 +99,7 @@ private:
             std::atomic<float>* depthS = nullptr;
             std::atomic<float>* tonalS = nullptr;
             std::atomic<float>* transS = nullptr;
+            std::atomic<float>* bypass = nullptr; // ⚡
             std::atomic<float>* solo = nullptr;
             std::atomic<float>* delta = nullptr;
             std::atomic<float>* link = nullptr;
