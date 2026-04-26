@@ -199,6 +199,7 @@ void LUMINAEditor::resized()
 
 void LUMINAEditor::timerCallback()
 {
+    // --- 1. アナライザーの更新 ---
     float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
     float c2 = processor.apvts.getRawParameterValue("CROSS_2")->load();
     spectrumAnalyzer.setCrossovers(c1, c2);
@@ -215,5 +216,37 @@ void LUMINAEditor::timerCallback()
         spectrumAnalyzer.updateFrame(latestFrame);
         grMeter.updateFrame(latestFrame);
         repaint();
+    }
+
+    // --- 2. ⚡ UX改善：M/S と Link の状態に応じた UIの動的制御 ---
+    bool isMSMode = processor.apvts.getRawParameterValue("MS_MODE")->load() > 0.5f;
+    juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
+
+    for (int b = 0; b < 3; ++b) {
+        if (!isMSMode) {
+            // 【M/S OFF】ただのステレオモード
+            tabMid[b].setButtonText("Stereo");
+            tabSide[b].setVisible(false);
+            bandLink[b].setVisible(false);
+
+            // もしSideタブが開いたままならStereo(Mid)に強制リセット
+            if (currentTabIsSide[b]) setBandTab(b, false);
+        }
+        else {
+            // 【M/S ON】Mid/Sideモード
+            tabMid[b].setButtonText("Mid");
+            tabSide[b].setVisible(true);
+            bandLink[b].setVisible(true);
+
+            bool isLinked = processor.apvts.getRawParameterValue(prefixes[b] + "LINK")->load() > 0.5f;
+
+            // LinkがONならSideタブを押せないようにする
+            tabSide[b].setEnabled(!isLinked);
+
+            // Sideタブを開いている時にLinkをONにしたら、強制的にMidタブに戻す
+            if (isLinked && currentTabIsSide[b]) {
+                setBandTab(b, false);
+            }
+        }
     }
 }
