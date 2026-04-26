@@ -7,12 +7,24 @@
 #include <vector>
 #include <array>
 #include <memory>
+
 #include "DSP/SpectralEngine.h"
 #include "DSP/HPSSEngine.h"
 #include "DSP/MaskingModel.h"
 #include "DSP/OnsetDetector.h"
 #include "DSP/MSEncoder.h"
+#include "DSP/AnalyzerCore.h"
 #include "GUI/AnalysisFifo.h"
+
+// ⚡ 識別子エラー回避のため、クラス外で定義
+struct BandParams {
+    float threshold;
+    float depth;
+    float tonalShift;
+    float transShift;
+    bool isSolo;
+    bool isDelta;
+};
 
 class LUMINAProcessor : public juce::AudioProcessor
 {
@@ -45,7 +57,9 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
     AnalysisFifo analysisFifo;
+    AnalyzerCore analyzerCore;
 
 private:
     MSEncoder msEncoder;
@@ -54,28 +68,23 @@ private:
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
-    // SIMDアライメントを考慮したワークスペース
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
 
+    juce::AudioBuffer<float> inputCopyBuffer;
     std::vector<int> binToBarkMap;
-    double currentSampleRate = 44100.0;
 
-    struct BandParams {
-        float threshold;
-        float depth;
-        float tonalShift;
-        float transShift;
-        bool isSolo;
-        bool isDelta;
-    };
+    // ⚡ 基底クラスとの衝突回避のため名称変更
+    double mSampleRate = 44100.0;
 
-    // パラメータキャッシング（Real-time Safety）
     struct ParamCache {
         std::atomic<float>* cross1 = nullptr;
         std::atomic<float>* cross2 = nullptr;
         std::atomic<float>* msMode = nullptr;
+        std::atomic<float>* autoLevel = nullptr;
+        std::atomic<float>* autoBandTrigger = nullptr;
+
         struct Band {
             std::atomic<float>* threshM = nullptr;
             std::atomic<float>* depthM = nullptr;
@@ -92,6 +101,7 @@ private:
     } cache;
 
     void updateParamCache();
+    void handleAutoBandResult();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAProcessor)
 };

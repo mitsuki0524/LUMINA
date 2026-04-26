@@ -65,7 +65,7 @@ target_sources(LUMINA PRIVATE
     Source/GUI/GRMeter.h
     Source/GUI/AnalysisFifo.h
     Source/GUI/AbletonLookAndFeel.h
-)
+ "Source/DSP/AnalyzerCore.h" "Source/DSP/AnalyzerCore.cpp")
 
 # 6. インクルードパス (ディレクトリ階層の指定)
 target_include_directories(LUMINA PRIVATE
