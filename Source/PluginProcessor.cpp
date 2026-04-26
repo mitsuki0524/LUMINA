@@ -9,6 +9,7 @@ LUMINAProcessor::LUMINAProcessor()
     apvts(*this, nullptr, "Parameters", createParameterLayout())
 #endif
 {
+    updateParamCache();
 }
 
 LUMINAProcessor::~LUMINAProcessor() {}
@@ -27,6 +28,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         juce::NormalisableRange<float>(1000.0f, 20000.0f, 1.0f, 0.3f), 4000.0f,
         juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{ "MS_MODE", 1 }, "M/S Mode", false,
+        juce::AudioParameterBoolAttributes()));
+
     juce::StringArray bandPrefixes = { "B1_", "B2_", "B3_" };
     juce::StringArray bandNames = { "Low ", "Mid ", "High " };
 
@@ -35,26 +40,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         juce::String pfx = bandPrefixes[i];
         juce::String nm = bandNames[i];
 
+        // --- Mid / Stereo Parameters ---
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "THRESH", 1 }, nm + "Threshold",
+            juce::ParameterID{ pfx + "THRESH_M", 1 }, nm + "Thresh M",
             juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), 0.0f,
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "DEPTH", 1 }, nm + "Depth",
+            juce::ParameterID{ pfx + "DEPTH_M", 1 }, nm + "Depth M",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f,
             juce::AudioParameterFloatAttributes()));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TONAL", 1 }, nm + "Tonal",
+            juce::ParameterID{ pfx + "TONAL_M", 1 }, nm + "Tonal M",
             juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TRANS", 1 }, nm + "Trans",
+            juce::ParameterID{ pfx + "TRANS_M", 1 }, nm + "Trans M",
             juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 
+        // --- Side Parameters ---
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "THRESH_S", 1 }, nm + "Thresh S",
+            juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), 0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "DEPTH_S", 1 }, nm + "Depth S",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f,
+            juce::AudioParameterFloatAttributes()));
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "TONAL_S", 1 }, nm + "Tonal S",
+            juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "TRANS_S", 1 }, nm + "Trans S",
+            juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+        // --- Band Controls ---
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{ pfx + "SOLO", 1 }, nm + "Solo", false,
             juce::AudioParameterBoolAttributes()));
@@ -62,13 +90,35 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{ pfx + "DELTA", 1 }, nm + "Delta", false,
             juce::AudioParameterBoolAttributes()));
+
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{ pfx + "LINK", 1 }, nm + "Link M/S", true,
+            juce::AudioParameterBoolAttributes()));
     }
 
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{ "MS_MODE", 1 }, "M/S Mode", false,
-        juce::AudioParameterBoolAttributes()));
-
     return { params.begin(), params.end() };
+}
+
+void LUMINAProcessor::updateParamCache()
+{
+    cache.cross1 = apvts.getRawParameterValue("CROSS_1");
+    cache.cross2 = apvts.getRawParameterValue("CROSS_2");
+    cache.msMode = apvts.getRawParameterValue("MS_MODE");
+
+    juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
+    for (int i = 0; i < 3; ++i) {
+        cache.bands[i].threshM = apvts.getRawParameterValue(prefixes[i] + "THRESH_M");
+        cache.bands[i].depthM = apvts.getRawParameterValue(prefixes[i] + "DEPTH_M");
+        cache.bands[i].tonalM = apvts.getRawParameterValue(prefixes[i] + "TONAL_M");
+        cache.bands[i].transM = apvts.getRawParameterValue(prefixes[i] + "TRANS_M");
+        cache.bands[i].threshS = apvts.getRawParameterValue(prefixes[i] + "THRESH_S");
+        cache.bands[i].depthS = apvts.getRawParameterValue(prefixes[i] + "DEPTH_S");
+        cache.bands[i].tonalS = apvts.getRawParameterValue(prefixes[i] + "TONAL_S");
+        cache.bands[i].transS = apvts.getRawParameterValue(prefixes[i] + "TRANS_S");
+        cache.bands[i].solo = apvts.getRawParameterValue(prefixes[i] + "SOLO");
+        cache.bands[i].delta = apvts.getRawParameterValue(prefixes[i] + "DELTA");
+        cache.bands[i].link = apvts.getRawParameterValue(prefixes[i] + "LINK");
+    }
 }
 
 const juce::String LUMINAProcessor::getName() const { return JucePlugin_Name; }
@@ -120,11 +170,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 float* tonalMask = tonalMaskWorkspaces[ch].data();
                 float* binGains = binGainsWorkspaces[ch].data();
 
+                // ⚡ SIMD最適化: パワー計算
                 float normFactor = 1.0f / static_cast<float>(fftSize);
-                for (int i = 0; i < numBins; ++i) {
-                    float normMag = magnitudes[i] * normFactor;
-                    power[i] = normMag * normMag;
-                }
+                juce::FloatVectorOperations::multiply(power, magnitudes, normFactor, numBins);
+                juce::FloatVectorOperations::multiply(power, power, magnitudes, numBins);
+                juce::FloatVectorOperations::multiply(power, power, normFactor, numBins);
 
                 hpss.process(power, tonalMask, numBins);
                 bool isOnset = onset.detectOnset(power, numBins);
@@ -133,28 +183,39 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 auto maskThresh = masking.calcMaskingThreshold(barkPower);
                 auto tonalRatio = masking.calcBarkTonalRatio(tonalMask, numBins);
 
-                const bool isMsMode = *apvts.getRawParameterValue("MS_MODE") > 0.5f;
-                const float cross1 = *apvts.getRawParameterValue("CROSS_1");
-                const float cross2 = *apvts.getRawParameterValue("CROSS_2");
+                const bool isMsMode = cache.msMode->load() > 0.5f;
+                const bool isSide = (isMsMode && ch == 1);
+                const float cross1 = cache.cross1->load();
+                const float cross2 = cache.cross2->load();
 
                 std::array<BandParams, 3> bands;
-                juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
                 bool anySolo = false;
 
-                for (int i = 0; i < 3; ++i) {
-                    bands[i].threshold = *apvts.getRawParameterValue(prefixes[i] + "THRESH");
-                    bands[i].depth = *apvts.getRawParameterValue(prefixes[i] + "DEPTH");
-                    bands[i].tonalShift = juce::Decibels::decibelsToGain(apvts.getRawParameterValue(prefixes[i] + "TONAL")->load());
-                    bands[i].transShift = juce::Decibels::decibelsToGain(apvts.getRawParameterValue(prefixes[i] + "TRANS")->load());
-                    bands[i].isSolo = *apvts.getRawParameterValue(prefixes[i] + "SOLO") > 0.5f;
-                    bands[i].isDelta = *apvts.getRawParameterValue(prefixes[i] + "DELTA") > 0.5f;
-                    if (bands[i].isSolo) anySolo = true;
+                // キャッシュから現在のチャンネル（M/S）に適したパラメータを読み込む
+                for (int b = 0; b < 3; ++b) {
+                    bool isLinked = cache.bands[b].link->load() > 0.5f;
+
+                    if (isSide && !isLinked) {
+                        bands[b].threshold = cache.bands[b].threshS->load();
+                        bands[b].depth = cache.bands[b].depthS->load();
+                        bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalS->load());
+                        bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transS->load());
+                    }
+                    else {
+                        bands[b].threshold = cache.bands[b].threshM->load();
+                        bands[b].depth = cache.bands[b].depthM->load();
+                        bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalM->load());
+                        bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transM->load());
+                    }
+
+                    bands[b].isSolo = cache.bands[b].solo->load() > 0.5f;
+                    bands[b].isDelta = cache.bands[b].delta->load() > 0.5f;
+                    if (bands[b].isSolo) anySolo = true;
                 }
 
                 const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
                 const float transRatio = 1.414f;
 
-                // ⚡ GRメーター用のアレイ
                 std::array<float, 24> barkGR;
                 barkGR.fill(1.0f);
 
@@ -164,21 +225,19 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    float pureReductionGains[3]; // 純粋なリダクション量
-                    float targetGains[3];        // 最終的なゲイン（メイクアップ含む）
+                    float pureReductionGains[3];
+                    float targetGains[3];
 
                     for (int b = 0; b < 3; ++b) {
-                        float currentDepth = (isMsMode && ch == 1) ? 0.0f : bands[b].depth;
                         float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
                         float reductionGain = 1.0f;
 
                         if (excess > 0.0f && !isOnset) {
-                            float reductionDB = excess * currentDepth * tRatio;
+                            float reductionDB = excess * bands[b].depth * tRatio;
                             reductionGain = juce::Decibels::decibelsToGain(-reductionDB);
                         }
 
                         pureReductionGains[b] = reductionGain;
-
                         float shiftMultiplier = (bands[b].tonalShift * tRatio) + (bands[b].transShift * (1.0f - tRatio));
                         targetGains[b] = reductionGain * shiftMultiplier;
                     }
@@ -214,7 +273,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         }
                     }
 
-                    // ⚡ GRメーター用に純粋なリダクション量を合成し、最も削られている値を保存
                     float blendedReduction = (pureReductionGains[0] * wLow) + (pureReductionGains[1] * wMid) + (pureReductionGains[2] * wHigh);
                     if (blendedReduction < barkGR[barkIdx]) {
                         barkGR[barkIdx] = blendedReduction;
@@ -243,12 +301,12 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     binGains[i] = finalGain;
                 }
 
+                // GUIへ送るためのデータ更新 (Channel 0をマスターとして描画)
                 if (ch == 0) {
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
                     frame.barkPower = barkPower;
 
-                    // ⚡ GRのデータをフレームにコピー
                     for (int i = 0; i < 24; ++i) {
                         frame.barkGainReduction[i] = barkGR[i];
                     }
@@ -295,7 +353,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         buffer.clear(i, 0, numSamples);
     }
 
-    const bool isMsMode = *apvts.getRawParameterValue("MS_MODE") > 0.5f;
+    const bool isMsMode = cache.msMode->load() > 0.5f;
 
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 

@@ -1,26 +1,18 @@
 #ifndef LUMINA_PLUGINPROCESSOR_H
 #define LUMINA_PLUGINPROCESSOR_H
 
-// JuceHeader.h を直接モジュールと標準ライブラリに置き換え
 #include <juce_core/juce_core.h>
-#include <juce_events/juce_events.h>
-#include <juce_graphics/juce_graphics.h>
-#include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
 #include <array>
 #include <memory>
-
-#include "DSP/SpectralEngine.h"
 #include "DSP/SpectralEngine.h"
 #include "DSP/HPSSEngine.h"
 #include "DSP/MaskingModel.h"
 #include "DSP/OnsetDetector.h"
 #include "DSP/MSEncoder.h"
 #include "GUI/AnalysisFifo.h"
-
-class LUMINAEditor;
 
 class LUMINAProcessor : public juce::AudioProcessor
 {
@@ -57,12 +49,12 @@ public:
 
 private:
     MSEncoder msEncoder;
-
     std::array<SpectralEngine, 2> spectralEngines;
     std::array<HPSSEngine, 2>     hpssEngines;
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
+    // SIMDアライメントを考慮したワークスペース
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
@@ -78,6 +70,28 @@ private:
         bool isSolo;
         bool isDelta;
     };
+
+    // パラメータキャッシング（Real-time Safety）
+    struct ParamCache {
+        std::atomic<float>* cross1 = nullptr;
+        std::atomic<float>* cross2 = nullptr;
+        std::atomic<float>* msMode = nullptr;
+        struct Band {
+            std::atomic<float>* threshM = nullptr;
+            std::atomic<float>* depthM = nullptr;
+            std::atomic<float>* tonalM = nullptr;
+            std::atomic<float>* transM = nullptr;
+            std::atomic<float>* threshS = nullptr;
+            std::atomic<float>* depthS = nullptr;
+            std::atomic<float>* tonalS = nullptr;
+            std::atomic<float>* transS = nullptr;
+            std::atomic<float>* solo = nullptr;
+            std::atomic<float>* delta = nullptr;
+            std::atomic<float>* link = nullptr;
+        } bands[3];
+    } cache;
+
+    void updateParamCache();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAProcessor)
 };

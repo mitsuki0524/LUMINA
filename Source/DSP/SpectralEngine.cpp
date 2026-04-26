@@ -80,19 +80,15 @@ void SpectralEngine::processWOLA()
     int N = currentFftSize;
     int numBins = N / 2 + 1;
 
-    for (int i = 0; i < N; ++i) {
-        tData[i] = inFifo[i] * win[i];
-    }
-    for (int i = N; i < 2 * N; ++i) {
-        tData[i] = 0.0f;
-    }
+    // ⚡ SIMD最適化: 窓関数の乗算とゼロパディングをベクトル化
+    juce::FloatVectorOperations::multiply(tData, inFifo, win, N);
+    juce::FloatVectorOperations::clear(tData + N, N);
 
     fft->performRealOnlyForwardTransform(tData);
 
     float* mags = magnitudes.data();
     float* phs = phases.data();
 
-    // JUCEの特殊なパック形式（[0]にDC、[1]にNyquist）を正確に解凍
     mags[0] = std::abs(tData[0]);
     phs[0] = (tData[0] < 0.0f) ? juce::MathConstants<float>::pi : 0.0f;
 
@@ -110,7 +106,6 @@ void SpectralEngine::processWOLA()
         onProcessSpectrum(mags, numBins);
     }
 
-    // 極座標からJUCEパック形式へ正確に再合成
     float mDC = mags[0];
     if (std::isnan(mDC) || std::isinf(mDC)) mDC = 0.0f;
     tData[0] = mDC * std::cos(phs[0]);
@@ -130,10 +125,13 @@ void SpectralEngine::processWOLA()
     fft->performRealOnlyInverseTransform(tData);
 
     float* outFifo = outputFifo.data();
+    float correction = gainCorrection;
+
+    // ⚡ 最適化: オーバーラップ・アドの適用
     for (int i = 0; i < N; ++i) {
         float outSample = tData[i];
         if (std::isnan(outSample) || std::isinf(outSample)) outSample = 0.0f;
-        outFifo[i] += outSample * win[i] * gainCorrection;
+        outFifo[i] += outSample * win[i] * correction;
     }
 }
 
