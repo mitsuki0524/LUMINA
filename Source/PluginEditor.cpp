@@ -1,13 +1,26 @@
+// ==========================================
+// Source/PluginEditor.cpp
+// ==========================================
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// ==========================================
+// Source/PluginEditor.cpp (修正部分)
+// ==========================================
 LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
-    : AudioProcessorEditor(&p), processor(p)
+    : AudioProcessorEditor(&p),
+    processor(p),
+    spectrumAnalyzer(p.apvts)
 {
     setLookAndFeel(&customLookAndFeel);
 
     addAndMakeVisible(spectrumAnalyzer);
     addAndMakeVisible(grMeter);
+
+    // ⚡【追加】GRMeterはマウスイベントを無視し、下のSpectrumAnalyzerにクリックを透過させる
+    grMeter.setInterceptsMouseClicks(false, false);
+
+    // ...以下既存のコード...
 
     auto setupSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -19,11 +32,6 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         l.setFont(13.0f);
         addAndMakeVisible(l);
         };
-
-    setupSlider(crossSliders[0], crossLabels[0], "Cross 1");
-    setupSlider(crossSliders[1], crossLabels[1], "Cross 2");
-    crossAttachments[0] = std::make_unique<SliderAttachment>(processor.apvts, "CROSS_1", crossSliders[0]);
-    crossAttachments[1] = std::make_unique<SliderAttachment>(processor.apvts, "CROSS_2", crossSliders[1]);
 
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
     juce::StringArray paramNames = { "THRESH", "DEPTH", "TONAL", "TRANS" };
@@ -82,19 +90,11 @@ void LUMINAEditor::resized()
 
     auto globalRow = uiArea.removeFromTop(80);
 
+    // M/S モードボタンの配置
     auto msArea = globalRow.removeFromLeft(120);
     msModeButton.setBounds(msArea.withSizeKeepingCentre(100, 30));
 
-    globalRow.reduce(100, 0);
-    auto cross1Area = globalRow.removeFromLeft(globalRow.getWidth() / 2);
-    auto cross2Area = globalRow;
-
-    crossLabels[0].setBounds(cross1Area.removeFromTop(20));
-    crossSliders[0].setBounds(cross1Area);
-
-    crossLabels[1].setBounds(cross2Area.removeFromTop(20));
-    crossSliders[1].setBounds(cross2Area);
-
+    // ⚡ クロスオーバー用のノブを削除したため、レイアウトがすっきりしました
     uiArea.removeFromTop(10);
 
     int panelWidth = uiArea.getWidth() / 3;
@@ -151,7 +151,7 @@ void LUMINAEditor::timerCallback()
 
     if (hasNewData) {
         spectrumAnalyzer.updateFrame(latestFrame);
-        grMeter.updateFrame(latestFrame); // ⚡ コメントアウトを外して有効化
+        grMeter.updateFrame(latestFrame);
         repaint();
     }
 }

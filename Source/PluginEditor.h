@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginEditor.h
+// ==========================================
 #ifndef LUMINA_PLUGINEDITOR_H
 #define LUMINA_PLUGINEDITOR_H
 
@@ -8,7 +11,6 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
-
 #include "PluginProcessor.h"
 #include "GUI/SpectrumAnalyzer.h"
 #include "GUI/GRMeter.h"
@@ -29,11 +31,8 @@ private:
     LUMINAProcessor& processor;
     AbletonLookAndFeel customLookAndFeel; // カスタムUIのインスタンス
 
-    SpectrumAnalyzer spectrumAnalyzer;
+    SpectrumAnalyzer spectrumAnalyzer; // APVTSを渡して初期化する
     GRMeter grMeter;
-
-    juce::Slider crossSliders[2];
-    juce::Label crossLabels[2];
 
     juce::Slider bandSliders[3][4];
     juce::Label bandLabels[3][4];
@@ -45,7 +44,6 @@ private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    std::unique_ptr<SliderAttachment> crossAttachments[2];
     std::unique_ptr<SliderAttachment> bandAttachments[3][4];
     std::unique_ptr<ButtonAttachment> bandButtonAttachments[3][2];
     std::unique_ptr<ButtonAttachment> msModeAttachment;
@@ -54,5 +52,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAEditor)
 };
-
-#endif
+#endif // LUMINA_PLUGINEDITOR_H
