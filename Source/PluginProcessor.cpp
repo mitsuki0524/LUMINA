@@ -150,6 +150,12 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     const int hopSize = mFftSize / 4;
 
     inputCopyBuffer.setSize(2, samplesPerBlock);
+
+    // ⚡ Dry信号の遅延補正バッファを初期化 (最大FFTサイズ分確保すれば安全)
+    dryDelayBuffer.setSize(2, mFftSize + samplesPerBlock + 1024);
+    dryDelayBuffer.clear();
+    delayWritePosition = 0;
+
     analyzerCore.prepare(sampleRate, mFftSize, hopSize);
     widthEngine.prepare(sampleRate, samplesPerBlock);
 
@@ -185,7 +191,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 float* binGains = binGainsWorkspaces[ch].data();
                 float* binTameGains = tameGainsWorkspaces[ch].data();
 
-                // ⚡ FFTの振幅を 0dBFS基準に完全正規化
                 float normFactor = 2.0f / static_cast<float>(mFftSize);
                 std::vector<float> rawMags(nBins, 0.0f);
                 for (int i = 0; i < nBins; ++i) {
@@ -245,8 +250,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 }
 
                 const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
-
-                // カーブの「緩やかさ」は今まで通り維持 (急峻化禁止)
                 const float transRatio = 1.414f;
                 std::array<float, 24> barkGR;
                 barkGR.fill(1.0f);
@@ -257,8 +260,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    // ⚡ 【最重要修正】対数（Log2）スケールを用いたクロスオーバー計算
-                    // 幅は広いまま、-6dBの交差点をGUIの縦線と1Hzの狂いもなく一致させます。
                     float wLow = 1.0f, wMid = 0.0f, wHigh = 0.0f;
                     float logHz = std::log2(hz);
 
@@ -283,7 +284,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         }
                     }
 
-                    // Tame の計算 (HPSS Tonal Ratio によるトランジェント保護)
                     float effTame0 = bands[0].isBypass ? 0.0f : bands[0].tame;
                     float effTame1 = bands[1].isBypass ? 0.0f : bands[1].tame;
                     float effTame2 = bands[2].isBypass ? 0.0f : bands[2].tame;
@@ -298,7 +298,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     }
                     binTameGains[i] = tGain;
 
-                    // Dynamic EQ (Threshold) の計算
                     float dGain0 = 1.0f, dGain1 = 1.0f, dGain2 = 1.0f;
                     float pureReductions[3] = { 1.0f, 1.0f, 1.0f };
 
@@ -316,7 +315,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     calcDynEQ(1, dGain1, pureReductions[1]);
                     calcDynEQ(2, dGain2, pureReductions[2]);
 
-                    // トータルゲイン計算と Delta / Solo ロジック
                     float totalGain0 = tGain * dGain0;
                     float totalGain1 = tGain * dGain1;
                     float totalGain2 = tGain * dGain2;
@@ -333,7 +331,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                     float finalGain = (totalGain0 * wLow) + (totalGain1 * wMid) + (totalGain2 * wHigh);
 
-                    // FFTバッファへの書き戻し (ここで非正規化して元のスケールに戻す)
                     magnitudes[i] *= finalGain;
                     binGains[i] = finalGain;
 
@@ -341,7 +338,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (blendedReduction < barkGR[barkIdx]) barkGR[barkIdx] = blendedReduction;
                 }
 
-                // GUI へのデータ転送
                 if (ch == 0) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
@@ -366,7 +362,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         for (int j = 0; j < binsPerUI; ++j) {
                             int idx = startIdx + j;
                             if (idx < nBins) {
-                                // rawMags は 0dBFS正規化済み
                                 sumPre += rawMags[idx] * rawMags[idx];
                                 float postMag = rawMags[idx] * binGains[idx];
                                 sumPost += postMag * postMag;
@@ -431,6 +426,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     const bool isMsMode = cache.msMode->load() > 0.5f;
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 
+    // FFTエンジンの処理
     for (int ch = 0; ch < numChannels; ++ch) {
         float* data = buffer.getWritePointer(ch);
         spectralEngines[ch].process(data, data, numSamples);
@@ -445,19 +441,49 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         widthEngine.processStereoWidth(buffer, wLow, wMid, wHigh);
     }
 
+    // アナライザーへデータ送信
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),
         buffer.getArrayOfWritePointers(),
         numChannels, numSamples);
 
+    // ⚡ Dry/Wet ミックスとレイテンシー補正の実装
     float wetRatio = cache.masterDryWet->load();
-    if (wetRatio < 1.0f) {
-        for (int ch = 0; ch < numChannels; ++ch) {
-            const float* dryData = inputCopyBuffer.getReadPointer(ch);
-            float* wetData = buffer.getWritePointer(ch);
-            for (int i = 0; i < numSamples; ++i) {
-                wetData[i] = dryData[i] * (1.0f - wetRatio) + wetData[i] * wetRatio;
+    int latency = spectralEngines[0].getLatencySamples();
+    int delayBufferSize = dryDelayBuffer.getNumSamples();
+
+    // 常に遅延バッファを更新し、Dry信号を正確に遅延させる
+    for (int ch = 0; ch < numChannels; ++ch) {
+        const float* dryData = inputCopyBuffer.getReadPointer(ch);
+        float* wetData = buffer.getWritePointer(ch);
+        float* delayData = dryDelayBuffer.getWritePointer(ch);
+
+        int tempWritePos = delayWritePosition;
+        int readPos = tempWritePos - latency;
+        if (readPos < 0) readPos += delayBufferSize;
+
+        for (int i = 0; i < numSamples; ++i) {
+            // 現在のDryを記録
+            delayData[tempWritePos] = dryData[i];
+
+            // レイテンシー分遅れたDryを取得
+            float delayedDry = delayData[readPos];
+
+            // Wetとミックス（位相ダブり防止）
+            if (wetRatio < 1.0f) {
+                wetData[i] = delayedDry * (1.0f - wetRatio) + wetData[i] * wetRatio;
             }
+
+            tempWritePos++;
+            if (tempWritePos >= delayBufferSize) tempWritePos = 0;
+
+            readPos++;
+            if (readPos >= delayBufferSize) readPos = 0;
+        }
+
+        // 最終チャンネル処理後にWritePosを確定
+        if (ch == numChannels - 1) {
+            delayWritePosition = tempWritePos;
         }
     }
 

@@ -119,35 +119,62 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.setColour(draggingCrossIndex == 1 ? juce::Colours::white : juce::Colours::white.withAlpha(0.3f));
     g.drawVerticalLine(static_cast<int>(x2), 0.0f, bounds.getHeight());
 
-    // ⚡ スケールの上限を +36dB に大幅拡張
+    // ⚡ スケールの上限を実用的な +12dB に変更
     const float minDB = -80.0f;
-    const float maxDB = 36.0f;
+    const float maxDB = 12.0f;
 
-    // ⚡ カラーグラデーションの設定 (Low=Orange, Mid=Purple, High=Cyan)
+    // ⚡ 基本カラー設定
     juce::Colour colourLow = juce::Colour::fromString("FFFF8C00");
     juce::Colour colourMid = juce::Colour::fromString("FF764DFF");
     juce::Colour colourHigh = juce::Colour::fromString("FF00E5FF");
 
-    juce::ColourGradient bandGradient;
-    bandGradient.point1 = { 0.0f, 0.0f };
-    bandGradient.point2 = { bounds.getWidth(), 0.0f };
+    // ⚡ Tame描画用の「薄く明るい発光色」を作成
+    juce::Colour tameLow = colourLow.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
+    juce::Colour tameMid = colourMid.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
+    juce::Colour tameHigh = colourHigh.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
 
-    // クロスオーバーの縦線で色がスパッと切り替わるように設定
     float normX1 = juce::jlimit(0.0f, 1.0f, x1 / bounds.getWidth());
     float normX2 = juce::jlimit(0.0f, 1.0f, x2 / bounds.getWidth());
 
+    // メイン波形用グラデーション
+    juce::ColourGradient bandGradient;
+    bandGradient.point1 = { 0.0f, 0.0f };
+    bandGradient.point2 = { bounds.getWidth(), 0.0f };
     bandGradient.addColour(0.0f, colourLow);
-    if (normX1 > 0.0f) bandGradient.addColour(normX1, colourLow);
-    if (normX1 > 0.0f) bandGradient.addColour(normX1 + 0.001f, colourMid);
-    if (normX2 > 0.0f) bandGradient.addColour(normX2, colourMid);
-    if (normX2 > 0.0f) bandGradient.addColour(normX2 + 0.001f, colourHigh);
+    if (normX1 > 0.0f) { bandGradient.addColour(normX1, colourLow); bandGradient.addColour(normX1 + 0.001f, colourMid); }
+    if (normX2 > 0.0f) { bandGradient.addColour(normX2, colourMid); bandGradient.addColour(normX2 + 0.001f, colourHigh); }
     bandGradient.addColour(1.0f, colourHigh);
+
+    // Tame波形用グラデーション
+    juce::ColourGradient tameGradient;
+    tameGradient.point1 = { 0.0f, 0.0f };
+    tameGradient.point2 = { bounds.getWidth(), 0.0f };
+    tameGradient.addColour(0.0f, tameLow);
+    if (normX1 > 0.0f) { tameGradient.addColour(normX1, tameLow); tameGradient.addColour(normX1 + 0.001f, tameMid); }
+    if (normX2 > 0.0f) { tameGradient.addColour(normX2, tameMid); tameGradient.addColour(normX2 + 0.001f, tameHigh); }
+    tameGradient.addColour(1.0f, tameHigh);
+
+    // ⚡ 波形のスムージング（滑らかな曲線にするための移動平均処理）
+    std::array<float, 512> smoothedPre = currentFrame.unprocessedSpectrum;
+    std::array<float, 512> smoothedPost = currentFrame.magnitudeSpectrum;
+    std::array<float, 512> smoothedTame = currentFrame.tameSpectrum;
+
+    for (int pass = 0; pass < 3; ++pass) {
+        std::array<float, 512> tempPre = smoothedPre;
+        std::array<float, 512> tempPost = smoothedPost;
+        std::array<float, 512> tempTame = smoothedTame;
+        for (int i = 1; i < 511; ++i) {
+            smoothedPre[i] = (tempPre[i - 1] + tempPre[i] * 2.0f + tempPre[i + 1]) / 4.0f;
+            smoothedPost[i] = (tempPost[i - 1] + tempPost[i] * 2.0f + tempPost[i + 1]) / 4.0f;
+            smoothedTame[i] = (tempTame[i - 1] + tempTame[i] * 2.0f + tempTame[i + 1]) / 4.0f;
+        }
+    }
 
     // 1. 原音波形(Pre)の描画 (背景)
     juce::Path prePath;
     bool preStarted = false;
     for (size_t i = 0; i < 512; ++i) {
-        float mag = currentFrame.unprocessedSpectrum[i];
+        float mag = smoothedPre[i];
         if (mag > 0.0f) {
             float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
@@ -164,22 +191,14 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         g.fillPath(prePath);
     }
 
-    // 2. Tameの滑らかなシアン色ハイライト描画
-    std::array<float, 512> smoothedTame = currentFrame.tameSpectrum;
-    for (int pass = 0; pass < 3; ++pass) {
-        std::array<float, 512> temp = smoothedTame;
-        for (int i = 1; i < 511; ++i) {
-            smoothedTame[i] = (temp[i - 1] + temp[i] + temp[i + 1]) / 3.0f;
-        }
-    }
-
+    // 2. Tameの滑らかで美しいハイライト描画
     juce::Path tamePath;
     bool hasTame = false;
 
     for (size_t i = 0; i < 512; ++i) {
         if (smoothedTame[i] < 0.99f) hasTame = true;
 
-        float dbTop = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(currentFrame.unprocessedSpectrum[i], minDB));
+        float dbTop = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(smoothedPre[i], minDB));
         float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
         float x = getXFromFreq(freq, bounds.getWidth());
         float yTop = juce::jmap(dbTop, minDB, maxDB, bounds.getHeight(), 0.0f);
@@ -190,7 +209,7 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
 
     if (hasTame) {
         for (int i = 511; i >= 0; --i) {
-            float magBot = currentFrame.unprocessedSpectrum[i] * smoothedTame[i];
+            float magBot = smoothedPre[i] * smoothedTame[i];
             float dbBot = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magBot, minDB));
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
@@ -200,15 +219,17 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         }
         tamePath.closeSubPath();
 
-        g.setColour(juce::Colour::fromString("B300E5FF"));
+        // 各帯域の明るい(薄い)色で削られた領域を表現
+        g.setGradientFill(tameGradient);
+        g.setOpacity(0.85f);
         g.fillPath(tamePath);
     }
 
-    // ⚡ 3. 最終処理後(Post)波形の描画 (グラデーション適用)
+    // 3. 最終処理後(Post)波形の描画
     juce::Path postPath;
     bool postStarted = false;
     for (size_t i = 0; i < 512; ++i) {
-        float mag = currentFrame.magnitudeSpectrum[i];
+        float mag = smoothedPost[i];
         if (mag > 0.0f) {
             float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
@@ -222,12 +243,10 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     if (postStarted) {
         postPath.lineTo(bounds.getWidth(), bounds.getHeight()); postPath.closeSubPath();
 
-        // グラデーションで塗りつぶし（半透明）
         g.setGradientFill(bandGradient);
         g.setOpacity(0.5f);
         g.fillPath(postPath);
 
-        // 輪郭線は元の不透明なグラデーションで描画
         g.setOpacity(1.0f);
         g.strokePath(postPath, juce::PathStrokeType(1.5f));
     }

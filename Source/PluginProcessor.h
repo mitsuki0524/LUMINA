@@ -165,6 +165,11 @@ private:
     std::array<std::vector<float>, 2> tameGainsWorkspaces;
 
     juce::AudioBuffer<float> inputCopyBuffer;
+
+    // ⚡ 追加: Dry/Wet時のレイテンシー補正（コムフィルタ防止）用バッファ
+    juce::AudioBuffer<float> dryDelayBuffer;
+    int delayWritePosition = 0;
+
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;
