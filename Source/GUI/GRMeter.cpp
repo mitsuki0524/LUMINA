@@ -1,4 +1,8 @@
+// ==========================================
+// Source/GUI/GRMeter.cpp
+// ==========================================
 #include "GRMeter.h"
+#include <juce_audio_basics/juce_audio_basics.h> // ⚡ 追加: juce::Decibels を使用するために必須
 #include <cmath>
 
 GRMeter::GRMeter()

@@ -142,7 +142,7 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         bandSoloAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "SOLO", bandSolo[b]);
         bandDeltaAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "DELTA", bandDelta[b]);
 
-        // ⚡ 砂時計用スライダーの設定 (Tame)
+        // ⚡ Tame スライダー (砂時計型 入口)
         bandTame[b].setSliderStyle(juce::Slider::LinearHorizontal);
         bandTame[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
         addAndMakeVisible(bandTame[b]);
@@ -151,7 +151,7 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         addAndMakeVisible(bandTameLabel[b]);
         bandTameAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME", bandTame[b]);
 
-        // ⚡ 砂時計用スライダーの設定 (Width)
+        // ⚡ Width スライダー (砂時計型 出口)
         bandWidth[b].setSliderStyle(juce::Slider::LinearHorizontal);
         bandWidth[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
         addAndMakeVisible(bandWidth[b]);
@@ -380,6 +380,7 @@ void LUMINAEditor::timerCallback()
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
 
     for (int b = 0; b < 3; ++b) {
+        // ⚡ Bypass状態を取得してUI全体をグレーアウト
         bool isBypass = processor.apvts.getRawParameterValue(prefixes[b] + "BYPASS")->load() > 0.5f;
         float alpha = isBypass ? 0.25f : 1.0f;
 

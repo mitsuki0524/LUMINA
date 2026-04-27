@@ -58,7 +58,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         juce::String pfx = bandPrefixes[i];
         juce::String nm = bandNames[i];
 
-        // ⚡ 追加: TAME & WIDTH
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "TAME", 1 }, nm + "Tame", 0.0f, 1.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -110,8 +109,8 @@ void LUMINAProcessor::updateParamCache()
 
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
     for (int i = 0; i < 3; ++i) {
-        cache.bands[i].tame = apvts.getRawParameterValue(prefixes[i] + "TAME");   // ⚡ 追加
-        cache.bands[i].width = apvts.getRawParameterValue(prefixes[i] + "WIDTH"); // ⚡ 追加
+        cache.bands[i].tame = apvts.getRawParameterValue(prefixes[i] + "TAME");
+        cache.bands[i].width = apvts.getRawParameterValue(prefixes[i] + "WIDTH");
         cache.bands[i].threshM = apvts.getRawParameterValue(prefixes[i] + "THRESH_M");
         cache.bands[i].depthM = apvts.getRawParameterValue(prefixes[i] + "DEPTH_M");
         cache.bands[i].tonalM = apvts.getRawParameterValue(prefixes[i] + "TONAL_M");
@@ -152,7 +151,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     inputCopyBuffer.setSize(2, samplesPerBlock);
     analyzerCore.prepare(sampleRate, mFftSize, hopSize);
-    widthEngine.prepare(sampleRate, samplesPerBlock); // ⚡ 追加
+    widthEngine.prepare(sampleRate, samplesPerBlock);
 
     binToBarkMap.assign(static_cast<size_t>(numBins), 0);
     const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(mFftSize);
@@ -207,7 +206,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                 for (int b = 0; b < 3; ++b) {
                     bool isLinked = cache.bands[b].link->load() > 0.5f;
-                    bands[b].tame = cache.bands[b].tame->load(); // ⚡
+                    bands[b].tame = cache.bands[b].tame->load();
 
                     if (isSide && !isLinked) {
                         bands[b].threshold = cache.bands[b].threshS->load();
@@ -227,7 +226,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[b].isSolo) anySolo = true;
                 }
 
-                // ⚡ MICRO: Tame (Resonance Suppression) 用のゼロ位相エンベロープ構築
+                // ⚡ MICRO: Tame 用のゼロ位相エンベロープ構築
                 std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
                 float smoothAlpha = 0.92f;
                 env[0] = magnitudes[0];
@@ -295,14 +294,26 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     float originalMag = magnitudes[i];
                     float finalGain = 1.0f;
 
-                    // ⚡ TAME 処理 (Sootheアルゴリズム)
-                    float currentTame = (bands[0].tame * wLow) + (bands[1].tame * wMid) + (bands[2].tame * wHigh);
+                    // ⚡ TAME 処理 (Bypass / Delta 対応版)
+                    float effTame0 = bands[0].isBypass ? 0.0f : bands[0].tame;
+                    float effTame1 = bands[1].isBypass ? 0.0f : bands[1].tame;
+                    float effTame2 = bands[2].isBypass ? 0.0f : bands[2].tame;
+                    float currentTame = (effTame0 * wLow) + (effTame1 * wMid) + (effTame2 * wHigh);
+
+                    float rawTameGain = 1.0f;
                     if (currentTame > 0.0f && originalMag > env[i] && env[i] > 1e-12f) {
                         float peakRatio = originalMag / env[i];
-                        float tameGain = 1.0f / (1.0f + (peakRatio - 1.0f) * currentTame * 3.0f);
-                        finalGain *= tameGain;
-                        originalMag *= tameGain; // クリーンな音を次の処理に渡す
+                        rawTameGain = 1.0f / (1.0f + (peakRatio - 1.0f) * currentTame * 3.0f);
                     }
+
+                    float t0 = bands[0].isBypass ? 1.0f : (bands[0].isDelta ? (1.0f - rawTameGain) : rawTameGain);
+                    float t1 = bands[1].isBypass ? 1.0f : (bands[1].isDelta ? (1.0f - rawTameGain) : rawTameGain);
+                    float t2 = bands[2].isBypass ? 1.0f : (bands[2].isDelta ? (1.0f - rawTameGain) : rawTameGain);
+
+                    float finalTameGain = (t0 * wLow) + (t1 * wMid) + (t2 * wHigh);
+
+                    finalGain *= finalTameGain;
+                    originalMag *= finalTameGain; // 以降のダイナミクス処理に渡す
 
                     float blendedReduction = (pureReductionGains[0] * wLow) + (pureReductionGains[1] * wMid) + (pureReductionGains[2] * wHigh);
                     if (blendedReduction < barkGR[barkIdx]) barkGR[barkIdx] = blendedReduction;
@@ -341,6 +352,8 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     const int binsPerUI = nBins / uiBins;
                     for (int i = 0; i < uiBins; ++i) {
                         float sumP = 0.0f;
+                        float minTame = 1.0f; // ⚡ Tame描画用
+
                         int startIdx = i * binsPerUI;
                         for (int j = 0; j < binsPerUI; ++j) {
                             int idx = startIdx + j;
@@ -348,9 +361,14 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                                 float rawMag = (anySolo || bands[0].isDelta || bands[1].isDelta || bands[2].isDelta)
                                     ? magnitudes[idx] : (magnitudes[idx] / (binGains[idx] + 1e-6f));
                                 sumP += rawMag * rawMag;
+
+                                // ⚡ Tameゲインを逆算して記録
+                                float tGain = (magnitudes[idx] + 1e-12f) / (rawMag + 1e-12f);
+                                if (tGain < minTame) minTame = tGain;
                             }
                         }
                         frame.magnitudeSpectrum[static_cast<size_t>(i)] = std::sqrt(sumP / static_cast<float>(binsPerUI) + 1e-12f);
+                        frame.tameSpectrum[static_cast<size_t>(i)] = minTame;
                     }
                     analysisFifo.push(frame);
                 }
@@ -403,7 +421,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         }
     }
 
-    // --- FFT Processing (Tame & Dynamics) ---
     const bool isMsMode = cache.msMode->load() > 0.5f;
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 
@@ -414,8 +431,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     if (isMsMode) msEncoder.decodeMidSide(buffer);
 
-    // ⚡ 追加: Stereo Width Processing (時間領域の絶対周波数処理)
-    // 常にL/Rドメインで処理されるため、MS/Stereoモードを問わず完璧に動作します
+    // ⚡ Stereo Width Processing (時間領域の絶対周波数処理)
     float wLow = cache.bands[0].width->load();
     float wMid = cache.bands[1].width->load();
     float wHigh = cache.bands[2].width->load();

@@ -1,45 +1,44 @@
-#pragma once
-#include <JuceHeader.h>
+// ==========================================
+// Source/GUI/AnalysisFifo.h
+// ==========================================
+#ifndef LUMINA_ANALYSISFIFO_H
+#define LUMINA_ANALYSISFIFO_H
+
+#include <juce_core/juce_core.h>
 #include <array>
 
-// GUIスレッドへ送るための1フレーム分の分析データ
 struct AnalysisFrame {
-    std::array<float, 512> magnitudeSpectrum{}; // 縮小されたスペクトル表示用
-    std::array<float, 24>  barkGainReduction{}; // 各Bark帯域のGR
-    std::array<float, 24>  barkPower{}; // 各Bark帯域のパワー
-    // ⚡ 追加: 現在Soloになっている帯域のインデックス (-1: なし, 0: Low, 1: Mid, 2: High)
+    bool isOnset = false;
+    std::array<float, 24> barkPower{};
+    std::array<float, 24> barkGainReduction{};
+    std::array<float, 512> magnitudeSpectrum{};
+    std::array<float, 512> tameSpectrum{}; // ⚡ 追加: Tameによるゲインリダクション量 (0.0 ~ 1.0)
     int activeSoloBand = -1;
-    float rmsLevel = 0.0f;
-    float crestFactor = 0.0f;
-    float phaseCorrelation = 0.0f;
-    bool  isOnset = false;
 };
 
-// オーディオスレッドをブロックしないLock-freeなデータ転送クラス
-class AnalysisFifo
-{
+class AnalysisFifo {
 public:
-    static constexpr int SIZE = 32;
+    AnalysisFifo() : abstractFifo(32) {}
 
-    void push(const AnalysisFrame& f)
-    {
-        int s1, n1, s2, n2;
-        fifo_.prepareToWrite(1, s1, n1, s2, n2);
-        if (n1 > 0) buf_[s1] = f;
-        fifo_.finishedWrite(n1 + n2);
+    void push(const AnalysisFrame& frame) {
+        auto writeHandle = abstractFifo.write(1);
+        if (writeHandle.blockSize1 > 0) {
+            buffer[static_cast<size_t>(writeHandle.startIndex1)] = frame;
+        }
     }
 
-    bool pop(AnalysisFrame& out)
-    {
-        int s1, n1, s2, n2;
-        fifo_.prepareToRead(1, s1, n1, s2, n2);
-        if (n1 <= 0) return false;
-        out = buf_[s1];
-        fifo_.finishedRead(n1 + n2);
-        return true;
+    bool pop(AnalysisFrame& frame) {
+        auto readHandle = abstractFifo.read(1);
+        if (readHandle.blockSize1 > 0) {
+            frame = buffer[static_cast<size_t>(readHandle.startIndex1)];
+            return true;
+        }
+        return false;
     }
 
 private:
-    juce::AbstractFifo fifo_{ SIZE };
-    std::array<AnalysisFrame, SIZE> buf_;
+    juce::AbstractFifo abstractFifo;
+    std::array<AnalysisFrame, 32> buffer;
 };
+
+#endif // LUMINA_ANALYSISFIFO_H

@@ -66,7 +66,7 @@ private:
     juce::ToggleButton bandSolo[3];
     juce::ToggleButton bandDelta[3];
 
-    // ⚡ 追加: TameとWidthスライダー (砂時計レイアウト用)
+    // ⚡ 砂時計用スライダー (Tame / Width)
     juce::Slider bandTame[3];
     juce::Label bandTameLabel[3];
     juce::Slider bandWidth[3];
@@ -91,7 +91,7 @@ private:
     std::unique_ptr<SliderAttachment> masterOutAttachment;
     std::unique_ptr<SliderAttachment> masterDryWetAttachment;
 
-    // ⚡ 追加: TameとWidthのアタッチメント
+    // ⚡ Tame / Width アタッチメント
     std::unique_ptr<SliderAttachment> bandTameAttachments[3];
     std::unique_ptr<SliderAttachment> bandWidthAttachments[3];
 

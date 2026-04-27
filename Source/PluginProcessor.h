@@ -31,7 +31,7 @@ struct BandParams {
     bool isDelta;
 };
 
-// ⚡ 追加: 添付資料に基づく周波数帯域別ステレオ幅調整エンジン (絶対Hz固定)
+// ⚡ 添付資料に基づく周波数帯域別ステレオ幅調整エンジン (絶対Hz固定)
 class StereoWidthEngine
 {
 public:

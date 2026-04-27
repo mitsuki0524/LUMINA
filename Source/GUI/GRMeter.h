@@ -1,3 +1,6 @@
+// ==========================================
+// Source/GUI/GRMeter.h
+// ==========================================
 #ifndef LUMINA_GRMETER_H
 #define LUMINA_GRMETER_H
 
