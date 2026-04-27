@@ -119,7 +119,7 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.setColour(draggingCrossIndex == 1 ? juce::Colours::white : juce::Colours::white.withAlpha(0.3f));
     g.drawVerticalLine(static_cast<int>(x2), 0.0f, bounds.getHeight());
 
-    // ⚡ スケールの上限を実用的な +12dB に変更
+    // ⚡ スケールの上限を実用的な +12dB
     const float minDB = -80.0f;
     const float maxDB = 12.0f;
 
