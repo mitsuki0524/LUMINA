@@ -20,6 +20,8 @@
 #include "GUI/AnalysisFifo.h"
 
 struct BandParams {
+    float tame;       // ⚡ 追加: Resonance Suppression
+    float width;      // ⚡ 追加: Stereo Width
     float threshold;
     float depth;
     float tonalShift;
@@ -27,6 +29,96 @@ struct BandParams {
     bool isBypass;
     bool isSolo;
     bool isDelta;
+};
+
+// ⚡ 追加: 添付資料に基づく周波数帯域別ステレオ幅調整エンジン (絶対Hz固定)
+class StereoWidthEngine
+{
+public:
+    StereoWidthEngine() {}
+
+    void prepare(double sampleRate, int samplesPerBlock)
+    {
+        juce::dsp::ProcessSpec spec{ sampleRate, (juce::uint32)samplesPerBlock, 1 };
+
+        lp1.prepare(spec); hp1.prepare(spec);
+        lp2.prepare(spec); hp2.prepare(spec);
+        ap1_lo.prepare(spec); ap1_hi.prepare(spec); ap2_lo.prepare(spec);
+
+        lp1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+        hp1.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
+        lp2.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+        hp2.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
+        ap1_lo.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+        ap1_hi.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+        ap2_lo.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+
+        // ハードコーディングされた絶対クロスオーバー周波数
+        lp1.setCutoffFrequency(200.0f); hp1.setCutoffFrequency(200.0f);
+        ap1_lo.setCutoffFrequency(200.0f); ap1_hi.setCutoffFrequency(200.0f);
+        lp2.setCutoffFrequency(5000.0f); hp2.setCutoffFrequency(5000.0f);
+        ap2_lo.setCutoffFrequency(5000.0f);
+
+        // All-Pass デコリレーター係数
+        const float coeffTable[4] = { 0.6151f, -0.3693f, 0.7823f, -0.4999f };
+        for (int i = 0; i < 4; ++i) {
+            stages[i].coeff = coeffTable[i] * 0.45f;
+            stages[i].state = 0.0f;
+        }
+    }
+
+    void processStereoWidth(juce::AudioBuffer<float>& buffer, float wLow, float wMid, float wHigh)
+    {
+        float* L = buffer.getWritePointer(0);
+        float* R = buffer.getWritePointer(1);
+
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float M = (L[i] + R[i]) * 0.5f;
+            float S = (L[i] - R[i]) * 0.5f;
+
+            // 完全再構成 LR4 による3バンド分割 (Side成分のみ)
+            float low_prelim = lp1.processSample(0, S);
+            float rest = hp1.processSample(0, S);
+            float mid_prelim = lp2.processSample(0, rest);
+            float high_out = hp2.processSample(0, rest);
+
+            float s_low = ap2_lo.processSample(0, ap1_lo.processSample(0, low_prelim));
+            float s_mid = ap1_hi.processSample(0, mid_prelim);
+            float s_high = high_out;
+
+            // 低域・中域の Width 適用
+            s_low *= wLow;
+            s_mid *= wMid;
+
+            // 高域デコリレーション処理
+            float s_hi_decorr = s_high;
+            for (int k = 0; k < 4; ++k) {
+                float y = stages[k].coeff * s_hi_decorr + stages[k].state;
+                stages[k].state = s_hi_decorr - stages[k].coeff * y;
+                s_hi_decorr = y;
+            }
+
+            float amount = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f);
+            float s_high_L = s_high;
+            float s_high_R = s_high * (1.0f - amount) + s_hi_decorr * amount;
+            if (wHigh < 1.0f) {
+                s_high_L *= wHigh;
+                s_high_R *= wHigh;
+            }
+
+            float final_S_L = s_low + s_mid + s_high_L;
+            float final_S_R = s_low + s_mid + s_high_R;
+
+            L[i] = M + final_S_L;
+            R[i] = M - final_S_R;
+        }
+    }
+
+private:
+    juce::dsp::LinkwitzRileyFilter<float> lp1, hp1, lp2, hp2, ap1_lo, ap1_hi, ap2_lo;
+    struct AllPassStage { float coeff; float state; };
+    std::array<AllPassStage, 4> stages;
 };
 
 class LUMINAProcessor : public juce::AudioProcessor
@@ -66,12 +158,13 @@ public:
 
 private:
     MSEncoder msEncoder;
+    StereoWidthEngine widthEngine; // ⚡ 追加
+
     std::array<SpectralEngine, 2> spectralEngines;
     std::array<HPSSEngine, 2>     hpssEngines;
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
-    // ⚡ メモリのフラグメンテーションを防ぐため、ここでも動的割り当てを考慮
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
@@ -80,7 +173,7 @@ private:
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;
-    int mFftSize = 4096; // ⚡ 現在のFFTサイズを保持
+    int mFftSize = 4096;
 
     struct ParamCache {
         std::atomic<float>* cross1 = nullptr;
@@ -95,6 +188,8 @@ private:
         std::atomic<float>* autoBandTime = nullptr;
 
         struct Band {
+            std::atomic<float>* tame = nullptr;  // ⚡ 追加
+            std::atomic<float>* width = nullptr; // ⚡ 追加
             std::atomic<float>* threshM = nullptr;
             std::atomic<float>* depthM = nullptr;
             std::atomic<float>* tonalM = nullptr;

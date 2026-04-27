@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginEditor.cpp
+// ==========================================
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -23,32 +26,26 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     addAndMakeVisible(autoLevelButton);
     autoLevelAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "AUTO_LEVEL", autoLevelButton);
 
-    // ⚡ 追加: Auto Level Commit 関連のUIセットアップ
     addAndMakeVisible(autoLevelValueLabel);
     autoLevelValueLabel.setJustificationType(juce::Justification::centred);
     autoLevelValueLabel.setFont(14.0f);
-    autoLevelValueLabel.setText("Δ: 0.0 dB", juce::dontSendNotification);
+    autoLevelValueLabel.setText("Diff: 0.0 dB", juce::dontSendNotification);
 
     autoLevelCommitBtn.setButtonText("Commit");
     addAndMakeVisible(autoLevelCommitBtn);
     autoLevelCommitBtn.onClick = [this] {
-        // 現在の補正ゲインを取得してdBに変換
         float currentGain = processor.analyzerCore.getMatchingGain();
         float deltaDB = juce::Decibels::gainToDecibels(currentGain);
-
-        // 現在の Master Out Gain に加算 (-24 ~ +24の範囲にクランプ)
         float currentOut = processor.apvts.getRawParameterValue("MASTER_OUT")->load();
         float newOut = juce::jlimit(-24.0f, 24.0f, currentOut + deltaDB);
 
         if (auto* param = processor.apvts.getParameter("MASTER_OUT"))
             param->setValueNotifyingHost(param->convertTo0to1(newOut));
 
-        // 適用したらAuto LevelをOFFにする
         if (auto* param = processor.apvts.getParameter("AUTO_LEVEL"))
             param->setValueNotifyingHost(0.0f);
         };
 
-    // ⚡ Auto Band Time Combo
     autoBandTimeCombo.addItemList({ "3s", "10s", "30s" }, 1);
     autoBandTimeCombo.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(autoBandTimeCombo);
@@ -65,7 +62,7 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     autoBandProgress.setPercentageDisplay(true);
     autoBandProgress.setTextToDisplay("Ready");
 
-    // --- Master Section ⚡ ---
+    // --- Master Section ---
     auto setupMasterSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name, bool isVertical) {
         if (isVertical) {
             s.setSliderStyle(juce::Slider::LinearVertical);
@@ -97,7 +94,7 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     masterDryWetAttachment = std::make_unique<SliderAttachment>(processor.apvts, "MASTER_WET", masterDryWetSlider);
 
     // --- Band UI Setup ---
-    auto setupSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
+    auto setupRotary = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
         addChildComponent(s);
@@ -129,12 +126,10 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         tabSide[b].onClick = [this, b] { setBandTab(b, true); };
         bandLinkAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "LINK", bandLink[b]);
 
-        // ⚡ Bypass / Solo / Delta
         bandBypass[b].setButtonText("Bypass");
         bandSolo[b].setButtonText("Solo");
         bandDelta[b].setButtonText("Delta");
 
-        // ToggleButtonのスタイルをプッシュボタン風にする
         bandBypass[b].setClickingTogglesState(true);
         bandSolo[b].setClickingTogglesState(true);
         bandDelta[b].setClickingTogglesState(true);
@@ -147,17 +142,35 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         bandSoloAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "SOLO", bandSolo[b]);
         bandDeltaAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "DELTA", bandDelta[b]);
 
+        // ⚡ 砂時計用スライダーの設定 (Tame)
+        bandTame[b].setSliderStyle(juce::Slider::LinearHorizontal);
+        bandTame[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+        addAndMakeVisible(bandTame[b]);
+        bandTameLabel[b].setText("Tame", juce::dontSendNotification);
+        bandTameLabel[b].setFont(13.0f);
+        addAndMakeVisible(bandTameLabel[b]);
+        bandTameAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME", bandTame[b]);
+
+        // ⚡ 砂時計用スライダーの設定 (Width)
+        bandWidth[b].setSliderStyle(juce::Slider::LinearHorizontal);
+        bandWidth[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+        addAndMakeVisible(bandWidth[b]);
+        bandWidthLabel[b].setText("Width", juce::dontSendNotification);
+        bandWidthLabel[b].setFont(13.0f);
+        addAndMakeVisible(bandWidthLabel[b]);
+        bandWidthAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "WIDTH", bandWidth[b]);
+
         for (int p = 0; p < 4; ++p) {
-            setupSlider(bandSlidersM[b][p], bandLabelsM[b][p], labelNames[p] + " (M)");
+            setupRotary(bandSlidersM[b][p], bandLabelsM[b][p], labelNames[p] + " (M)");
             bandAttachmentsM[b][p] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + paramNames[p] + "_M", bandSlidersM[b][p]);
 
-            setupSlider(bandSlidersS[b][p], bandLabelsS[b][p], labelNames[p] + " (S)");
+            setupRotary(bandSlidersS[b][p], bandLabelsS[b][p], labelNames[p] + " (S)");
             bandAttachmentsS[b][p] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + paramNames[p] + "_S", bandSlidersS[b][p]);
         }
         setBandTab(b, false);
     }
 
-    setSize(1000, 750); // マスター追加に伴い横幅を少し拡張
+    setSize(1000, 750);
     startTimerHz(30);
 }
 
@@ -202,7 +215,7 @@ void LUMINAEditor::updateAutoBandUI()
         autoBandProgress.setTextToDisplay("Capturing...");
     }
     else if (state == AnalyzerCore::State::Done) {
-        autoBandButton.setEnabled(true); // ⚡ 再トリガーのために有効化
+        autoBandButton.setEnabled(true);
         autoBandButton.setButtonText("Retrigger");
         autoBandProgress.setTextToDisplay("Optimized");
     }
@@ -211,8 +224,6 @@ void LUMINAEditor::updateAutoBandUI()
 void LUMINAEditor::paint(juce::Graphics& g)
 {
     g.fillAll(findColour(juce::ResizableWindow::backgroundColourId));
-
-    // マスターセクションとの境界線を引く
     auto bounds = getLocalBounds().toFloat();
     float masterX = bounds.getWidth() - 140.0f;
     g.setColour(juce::Colours::white.withAlpha(0.1f));
@@ -223,16 +234,13 @@ void LUMINAEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // 1. Top Area (Visualizer) - 全幅使用
     auto visArea = bounds.removeFromTop(300);
     spectrumAnalyzer.setBounds(visArea.reduced(10));
     grMeter.setBounds(visArea.reduced(10));
 
-    // 2. 左右のパネル分割 (Main Area:Master Area = 860:140)
     auto masterArea = bounds.removeFromRight(140).reduced(10);
     auto mainArea = bounds.reduced(15);
 
-    // --- Master Area Layout ---
     masterTitle.setBounds(masterArea.removeFromTop(30));
     masterArea.removeFromTop(10);
 
@@ -250,13 +258,10 @@ void LUMINAEditor::resized()
     masterDryWetLabel.setBounds(masterArea.removeFromTop(20));
     masterDryWetSlider.setBounds(masterArea.removeFromTop(80));
 
-    // --- Main Area Layout (Global + Bands) ---
     auto globalRow = mainArea.removeFromTop(40);
-
     msModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
     globalRow.removeFromLeft(10);
 
-    // ⚡ 修正: Auto Level, Label, Commit を横に並べる
     autoLevelButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
     autoLevelValueLabel.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 20));
     autoLevelCommitBtn.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 24));
@@ -264,7 +269,6 @@ void LUMINAEditor::resized()
     auto bandBtnArea = globalRow.removeFromRight(90);
     autoBandButton.setBounds(bandBtnArea.withSizeKeepingCentre(80, 30));
     globalRow.removeFromRight(10);
-    // ...続く (autoBandProgress等の配置)
 
     autoBandProgress.setBounds(globalRow.removeFromRight(150).withSizeKeepingCentre(140, 20));
     globalRow.removeFromRight(10);
@@ -289,17 +293,23 @@ void LUMINAEditor::resized()
 
         panelBounds.removeFromTop(10);
 
-        // ⚡ Bypass / Solo / Delta Row
         auto btnRow = panelBounds.removeFromTop(30);
         int btnW = btnRow.getWidth() / 3;
         bandBypass[b].setBounds(btnRow.removeFromLeft(btnW).reduced(2, 0));
         bandSolo[b].setBounds(btnRow.removeFromLeft(btnW).reduced(2, 0));
         bandDelta[b].setBounds(btnRow.reduced(2, 0));
 
-        panelBounds.removeFromTop(20);
+        panelBounds.removeFromTop(15);
 
-        // --- Knobs Layout ---
-        auto topKnobRow = panelBounds.removeFromTop(80);
+        // ⚡ 1段目: TAMEスライダー (入口)
+        auto tameArea = panelBounds.removeFromTop(20);
+        bandTameLabel[b].setBounds(tameArea.removeFromLeft(40));
+        bandTame[b].setBounds(tameArea);
+
+        panelBounds.removeFromTop(15);
+
+        // ⚡ 2・3段目: 4つのノブ (中央グリッド)
+        auto topKnobRow = panelBounds.removeFromTop(75);
         auto threshArea = topKnobRow.removeFromLeft(topKnobRow.getWidth() / 2);
         auto depthArea = topKnobRow;
 
@@ -313,9 +323,9 @@ void LUMINAEditor::resized()
         bandLabelsS[b][1].setBounds(bandLabelsM[b][1].getBounds());
         bandSlidersS[b][1].setBounds(bandSlidersM[b][1].getBounds());
 
-        panelBounds.removeFromTop(10);
+        panelBounds.removeFromTop(5);
 
-        auto botKnobRow = panelBounds.removeFromTop(80);
+        auto botKnobRow = panelBounds.removeFromTop(75);
         auto tonalArea = botKnobRow.removeFromLeft(botKnobRow.getWidth() / 2);
         auto transArea = botKnobRow;
 
@@ -328,6 +338,13 @@ void LUMINAEditor::resized()
         bandSlidersM[b][3].setBounds(transArea);
         bandLabelsS[b][3].setBounds(bandLabelsM[b][3].getBounds());
         bandSlidersS[b][3].setBounds(bandSlidersM[b][3].getBounds());
+
+        panelBounds.removeFromTop(15);
+
+        // ⚡ 4段目: WIDTHスライダー (出口)
+        auto widthArea = panelBounds.removeFromTop(20);
+        bandWidthLabel[b].setBounds(widthArea.removeFromLeft(40));
+        bandWidth[b].setBounds(widthArea);
     }
 }
 
@@ -335,16 +352,14 @@ void LUMINAEditor::timerCallback()
 {
     updateAutoBandUI();
 
-    // ⚡ 追加: Auto Levelの数値表示更新
     float matchGain = processor.analyzerCore.getMatchingGain();
     float matchDB = juce::Decibels::gainToDecibels(matchGain);
     juce::String sign = (matchDB >= 0.0f && matchDB > 0.05f) ? "+" : "";
     autoLevelValueLabel.setText("Diff: " + sign + juce::String(matchDB, 1) + " dB", juce::dontSendNotification);
 
     bool isAutoLevelOn = processor.apvts.getRawParameterValue("AUTO_LEVEL")->load() > 0.5f;
-    autoLevelCommitBtn.setEnabled(isAutoLevelOn); // ONの時だけCommit可能
+    autoLevelCommitBtn.setEnabled(isAutoLevelOn);
 
-    // ...以下既存のコード
     float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
     float c2 = processor.apvts.getRawParameterValue("CROSS_2")->load();
     spectrumAnalyzer.setCrossovers(c1, c2);
@@ -361,14 +376,17 @@ void LUMINAEditor::timerCallback()
         repaint();
     }
 
-    // --- UX Control Logic ---
     bool isMSMode = processor.apvts.getRawParameterValue("MS_MODE")->load() > 0.5f;
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
 
     for (int b = 0; b < 3; ++b) {
-        // ⚡ Bypassによるグレーアウト処理
         bool isBypass = processor.apvts.getRawParameterValue(prefixes[b] + "BYPASS")->load() > 0.5f;
         float alpha = isBypass ? 0.25f : 1.0f;
+
+        bandTame[b].setAlpha(alpha);
+        bandTameLabel[b].setAlpha(alpha);
+        bandWidth[b].setAlpha(alpha);
+        bandWidthLabel[b].setAlpha(alpha);
 
         for (int p = 0; p < 4; ++p) {
             bandSlidersM[b][p].setAlpha(alpha);

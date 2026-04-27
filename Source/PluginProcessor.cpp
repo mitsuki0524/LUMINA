@@ -58,6 +58,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         juce::String pfx = bandPrefixes[i];
         juce::String nm = bandNames[i];
 
+        // ⚡ 追加: TAME & WIDTH
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "TAME", 1 }, nm + "Tame", 0.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{ pfx + "WIDTH", 1 }, nm + "Width", 0.0f, 2.0f, 1.0f));
+
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "THRESH_M", 1 }, nm + "Thresh M", -60.0f, 0.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -104,6 +110,8 @@ void LUMINAProcessor::updateParamCache()
 
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
     for (int i = 0; i < 3; ++i) {
+        cache.bands[i].tame = apvts.getRawParameterValue(prefixes[i] + "TAME");   // ⚡ 追加
+        cache.bands[i].width = apvts.getRawParameterValue(prefixes[i] + "WIDTH"); // ⚡ 追加
         cache.bands[i].threshM = apvts.getRawParameterValue(prefixes[i] + "THRESH_M");
         cache.bands[i].depthM = apvts.getRawParameterValue(prefixes[i] + "DEPTH_M");
         cache.bands[i].tonalM = apvts.getRawParameterValue(prefixes[i] + "TONAL_M");
@@ -133,21 +141,18 @@ void LUMINAProcessor::changeProgramName(int index, const juce::String& newName) 
 
 void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // ⚡ 修正: 存在しないAPI呼び出しを削除しました。
-    // デノーマル対策は processBlock 内の ScopedNoDenormals だけで完璧に機能します。
-
     mSampleRate = sampleRate;
 
-    // サンプルレートに応じたFFTサイズの動的切り替え
     if (sampleRate >= 176400.0)      mFftSize = 16384;
     else if (sampleRate >= 88200.0)  mFftSize = 8192;
     else                             mFftSize = 4096;
 
     const int numBins = mFftSize / 2 + 1;
-    const int hopSize = mFftSize / 4; // 75% オーバーラップ
+    const int hopSize = mFftSize / 4;
 
     inputCopyBuffer.setSize(2, samplesPerBlock);
     analyzerCore.prepare(sampleRate, mFftSize, hopSize);
+    widthEngine.prepare(sampleRate, samplesPerBlock); // ⚡ 追加
 
     binToBarkMap.assign(static_cast<size_t>(numBins), 0);
     const float binFreq = static_cast<float>(sampleRate) / static_cast<float>(mFftSize);
@@ -197,12 +202,13 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 const float cross1 = cache.cross1->load();
                 const float cross2 = cache.cross2->load();
 
-                // ⚡ 修正: 構造体配列をゼロクリア初期化
                 std::array<BandParams, 3> bands{};
                 bool anySolo = false;
 
                 for (int b = 0; b < 3; ++b) {
                     bool isLinked = cache.bands[b].link->load() > 0.5f;
+                    bands[b].tame = cache.bands[b].tame->load(); // ⚡
+
                     if (isSide && !isLinked) {
                         bands[b].threshold = cache.bands[b].threshS->load();
                         bands[b].depth = cache.bands[b].depthS->load();
@@ -221,6 +227,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[b].isSolo) anySolo = true;
                 }
 
+                // ⚡ MICRO: Tame (Resonance Suppression) 用のゼロ位相エンベロープ構築
+                std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
+                float smoothAlpha = 0.92f;
+                env[0] = magnitudes[0];
+                for (int i = 1; i < nBins; ++i) {
+                    env[i] = env[i - 1] * smoothAlpha + magnitudes[i] * (1.0f - smoothAlpha);
+                }
+                for (int i = nBins - 2; i >= 0; --i) {
+                    env[i] = env[i + 1] * smoothAlpha + env[i] * (1.0f - smoothAlpha);
+                }
+
                 const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
                 const float transRatio = 1.414f;
                 std::array<float, 24> barkGR;
@@ -232,7 +249,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    // ⚡ 修正: 生配列を {1.0f, 1.0f, 1.0f} で初期化
                     float pureReductionGains[3] = { 1.0f, 1.0f, 1.0f };
                     float targetGains[3] = { 1.0f, 1.0f, 1.0f };
 
@@ -276,23 +292,33 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         }
                     }
 
+                    float originalMag = magnitudes[i];
+                    float finalGain = 1.0f;
+
+                    // ⚡ TAME 処理 (Sootheアルゴリズム)
+                    float currentTame = (bands[0].tame * wLow) + (bands[1].tame * wMid) + (bands[2].tame * wHigh);
+                    if (currentTame > 0.0f && originalMag > env[i] && env[i] > 1e-12f) {
+                        float peakRatio = originalMag / env[i];
+                        float tameGain = 1.0f / (1.0f + (peakRatio - 1.0f) * currentTame * 3.0f);
+                        finalGain *= tameGain;
+                        originalMag *= tameGain; // クリーンな音を次の処理に渡す
+                    }
+
                     float blendedReduction = (pureReductionGains[0] * wLow) + (pureReductionGains[1] * wMid) + (pureReductionGains[2] * wHigh);
                     if (blendedReduction < barkGR[barkIdx]) barkGR[barkIdx] = blendedReduction;
 
-                    float originalMag = magnitudes[i];
-                    float finalGain = 0.0f;
                     if (anySolo) {
                         float soloGain = 0.0f;
                         if (bands[0].isSolo) soloGain += (bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0]) * wLow;
                         if (bands[1].isSolo) soloGain += (bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1]) * wMid;
                         if (bands[2].isSolo) soloGain += (bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2]) * wHigh;
-                        finalGain = soloGain;
+                        finalGain *= soloGain;
                     }
                     else {
                         float g0 = bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0];
                         float g1 = bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1];
                         float g2 = bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2];
-                        finalGain = (g0 * wLow) + (g1 * wMid) + (g2 * wHigh);
+                        finalGain *= (g0 * wLow) + (g1 * wMid) + (g2 * wHigh);
                     }
                     magnitudes[i] = originalMag * finalGain;
                     binGains[i] = finalGain;
@@ -305,7 +331,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     frame.barkPower = barkPower;
                     for (int i = 0; i < 24; ++i) frame.barkGainReduction[i] = barkGR[i];
 
-                    // ⚡ 追加: Solo状態の判定と格納
                     int soloBandIdx = -1;
                     if (bands[0].isSolo) soloBandIdx = 0;
                     else if (bands[1].isSolo) soloBandIdx = 1;
@@ -378,6 +403,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         }
     }
 
+    // --- FFT Processing (Tame & Dynamics) ---
     const bool isMsMode = cache.msMode->load() > 0.5f;
     if (isMsMode) msEncoder.encodeMidSide(buffer);
 
@@ -387,6 +413,15 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     }
 
     if (isMsMode) msEncoder.decodeMidSide(buffer);
+
+    // ⚡ 追加: Stereo Width Processing (時間領域の絶対周波数処理)
+    // 常にL/Rドメインで処理されるため、MS/Stereoモードを問わず完璧に動作します
+    float wLow = cache.bands[0].width->load();
+    float wMid = cache.bands[1].width->load();
+    float wHigh = cache.bands[2].width->load();
+    if (std::abs(wLow - 1.0f) > 0.01f || std::abs(wMid - 1.0f) > 0.01f || std::abs(wHigh - 1.0f) > 0.01f) {
+        widthEngine.processStereoWidth(buffer, wLow, wMid, wHigh);
+    }
 
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),
