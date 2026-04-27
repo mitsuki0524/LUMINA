@@ -20,8 +20,8 @@
 #include "GUI/AnalysisFifo.h"
 
 struct BandParams {
-    float tame;       // ⚡ 追加: Resonance Suppression
-    float width;      // ⚡ 追加: Stereo Width
+    float tame;
+    float width;
     float threshold;
     float depth;
     float tonalShift;
@@ -31,7 +31,6 @@ struct BandParams {
     bool isDelta;
 };
 
-// ⚡ 添付資料に基づく周波数帯域別ステレオ幅調整エンジン (絶対Hz固定)
 class StereoWidthEngine
 {
 public:
@@ -53,13 +52,11 @@ public:
         ap1_hi.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
         ap2_lo.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
 
-        // ハードコーディングされた絶対クロスオーバー周波数
         lp1.setCutoffFrequency(200.0f); hp1.setCutoffFrequency(200.0f);
         ap1_lo.setCutoffFrequency(200.0f); ap1_hi.setCutoffFrequency(200.0f);
         lp2.setCutoffFrequency(5000.0f); hp2.setCutoffFrequency(5000.0f);
         ap2_lo.setCutoffFrequency(5000.0f);
 
-        // All-Pass デコリレーター係数
         const float coeffTable[4] = { 0.6151f, -0.3693f, 0.7823f, -0.4999f };
         for (int i = 0; i < 4; ++i) {
             stages[i].coeff = coeffTable[i] * 0.45f;
@@ -77,7 +74,6 @@ public:
             float M = (L[i] + R[i]) * 0.5f;
             float S = (L[i] - R[i]) * 0.5f;
 
-            // 完全再構成 LR4 による3バンド分割 (Side成分のみ)
             float low_prelim = lp1.processSample(0, S);
             float rest = hp1.processSample(0, S);
             float mid_prelim = lp2.processSample(0, rest);
@@ -87,11 +83,9 @@ public:
             float s_mid = ap1_hi.processSample(0, mid_prelim);
             float s_high = high_out;
 
-            // 低域・中域の Width 適用
             s_low *= wLow;
             s_mid *= wMid;
 
-            // 高域デコリレーション処理
             float s_hi_decorr = s_high;
             for (int k = 0; k < 4; ++k) {
                 float y = stages[k].coeff * s_hi_decorr + stages[k].state;
@@ -158,7 +152,7 @@ public:
 
 private:
     MSEncoder msEncoder;
-    StereoWidthEngine widthEngine; // ⚡ 追加
+    StereoWidthEngine widthEngine;
 
     std::array<SpectralEngine, 2> spectralEngines;
     std::array<HPSSEngine, 2>     hpssEngines;
@@ -168,6 +162,7 @@ private:
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
+    std::array<std::vector<float>, 2> tameGainsWorkspaces;
 
     juce::AudioBuffer<float> inputCopyBuffer;
     std::vector<int> binToBarkMap;
@@ -188,8 +183,8 @@ private:
         std::atomic<float>* autoBandTime = nullptr;
 
         struct Band {
-            std::atomic<float>* tame = nullptr;  // ⚡ 追加
-            std::atomic<float>* width = nullptr; // ⚡ 追加
+            std::atomic<float>* tame = nullptr;
+            std::atomic<float>* width = nullptr;
             std::atomic<float>* threshM = nullptr;
             std::atomic<float>* depthM = nullptr;
             std::atomic<float>* tonalM = nullptr;

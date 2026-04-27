@@ -173,6 +173,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         powerWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         tonalMaskWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
         binGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
+        tameGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
 
         spectralEngines[ch].setProcessingCallback([this, ch, numBins](float* magnitudes, int nBins)
             {
@@ -182,11 +183,18 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 float* power = powerWorkspaces[ch].data();
                 float* tonalMask = tonalMaskWorkspaces[ch].data();
                 float* binGains = binGainsWorkspaces[ch].data();
+                float* binTameGains = tameGainsWorkspaces[ch].data();
 
-                float normFactor = 1.0f / static_cast<float>(mFftSize);
-                juce::FloatVectorOperations::multiply(power, magnitudes, normFactor, nBins);
+                // ⚡ FFTの振幅を 0dBFS基準に完全正規化
+                float normFactor = 2.0f / static_cast<float>(mFftSize);
+                std::vector<float> rawMags(nBins, 0.0f);
+                for (int i = 0; i < nBins; ++i) {
+                    rawMags[i] = magnitudes[i] * normFactor;
+                }
+
+                juce::FloatVectorOperations::multiply(power, magnitudes, 1.0f / static_cast<float>(mFftSize), nBins);
                 juce::FloatVectorOperations::multiply(power, power, magnitudes, nBins);
-                juce::FloatVectorOperations::multiply(power, power, normFactor, nBins);
+                juce::FloatVectorOperations::multiply(power, power, 1.0f / static_cast<float>(mFftSize), nBins);
 
                 if (ch == 0) analyzerCore.processSpectrumFrame(power, nBins);
 
@@ -198,8 +206,8 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                 const bool isMsMode = cache.msMode->load() > 0.5f;
                 const bool isSide = (isMsMode && ch == 1);
-                const float cross1 = cache.cross1->load();
-                const float cross2 = cache.cross2->load();
+                const float cross1 = std::max(20.0f, cache.cross1->load());
+                const float cross2 = std::max(20.0f, cache.cross2->load());
 
                 std::array<BandParams, 3> bands{};
                 bool anySolo = false;
@@ -226,115 +234,114 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[b].isSolo) anySolo = true;
                 }
 
-                // ⚡ MICRO: Tame 用のゼロ位相エンベロープ構築
                 std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
                 float smoothAlpha = 0.92f;
-                env[0] = magnitudes[0];
+                env[0] = rawMags[0];
                 for (int i = 1; i < nBins; ++i) {
-                    env[i] = env[i - 1] * smoothAlpha + magnitudes[i] * (1.0f - smoothAlpha);
+                    env[i] = env[i - 1] * smoothAlpha + rawMags[i] * (1.0f - smoothAlpha);
                 }
                 for (int i = nBins - 2; i >= 0; --i) {
                     env[i] = env[i + 1] * smoothAlpha + env[i] * (1.0f - smoothAlpha);
                 }
 
                 const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
+
+                // カーブの「緩やかさ」は今まで通り維持 (急峻化禁止)
                 const float transRatio = 1.414f;
                 std::array<float, 24> barkGR;
                 barkGR.fill(1.0f);
 
                 for (int i = 0; i < nBins; ++i)
                 {
-                    float hz = static_cast<float>(i) * bFreq;
+                    float hz = std::max(1.0f, static_cast<float>(i) * bFreq);
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    float pureReductionGains[3] = { 1.0f, 1.0f, 1.0f };
-                    float targetGains[3] = { 1.0f, 1.0f, 1.0f };
-
-                    for (int b = 0; b < 3; ++b) {
-                        if (bands[b].isBypass) {
-                            pureReductionGains[b] = 1.0f;
-                            targetGains[b] = 1.0f;
-                            continue;
-                        }
-
-                        float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
-                        float reductionGain = 1.0f;
-                        if (excess > 0.0f && !isOnset) {
-                            float reductionDB = excess * bands[b].depth * tRatio;
-                            reductionGain = juce::Decibels::decibelsToGain(-reductionDB);
-                        }
-                        pureReductionGains[b] = reductionGain;
-                        float shiftMultiplier = (bands[b].tonalShift * tRatio) + (bands[b].transShift * (1.0f - tRatio));
-                        targetGains[b] = reductionGain * shiftMultiplier;
-                    }
-
+                    // ⚡ 【最重要修正】対数（Log2）スケールを用いたクロスオーバー計算
+                    // 幅は広いまま、-6dBの交差点をGUIの縦線と1Hzの狂いもなく一致させます。
                     float wLow = 1.0f, wMid = 0.0f, wHigh = 0.0f;
-                    float c1_L = cross1 / transRatio;
-                    float c1_U = cross1 * transRatio;
-                    if (hz < c1_L) { wLow = 1.0f; wMid = 0.0f; }
-                    else if (hz > c1_U) { wLow = 0.0f; wMid = 1.0f; }
+                    float logHz = std::log2(hz);
+
+                    float logC1_L = std::log2(cross1 / transRatio);
+                    float logC1_U = std::log2(cross1 * transRatio);
+                    if (logHz <= logC1_L) { wLow = 1.0f; wMid = 0.0f; }
+                    else if (logHz >= logC1_U) { wLow = 0.0f; wMid = 1.0f; }
                     else {
-                        float t = (hz - c1_L) / (c1_U - c1_L);
+                        float t = (logHz - logC1_L) / (logC1_U - logC1_L);
                         float mix = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::pi * t));
                         wLow = 1.0f - mix; wMid = mix;
                     }
 
-                    float c2_L = cross2 / transRatio;
-                    float c2_U = cross2 * transRatio;
-                    if (hz > c2_L) {
-                        if (hz > c2_U) { wMid = 0.0f; wHigh = 1.0f; }
+                    float logC2_L = std::log2(cross2 / transRatio);
+                    float logC2_U = std::log2(cross2 * transRatio);
+                    if (logHz > logC2_L) {
+                        if (logHz >= logC2_U) { wMid = 0.0f; wHigh = 1.0f; }
                         else {
-                            float t = (hz - c2_L) / (c2_U - c2_L);
+                            float t = (logHz - logC2_L) / (logC2_U - logC2_L);
                             float mix = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::pi * t));
                             wHigh = wMid * mix; wMid = wMid * (1.0f - mix);
                         }
                     }
 
-                    float originalMag = magnitudes[i];
-                    float finalGain = 1.0f;
-
-                    // ⚡ TAME 処理 (Bypass / Delta 対応版)
+                    // Tame の計算 (HPSS Tonal Ratio によるトランジェント保護)
                     float effTame0 = bands[0].isBypass ? 0.0f : bands[0].tame;
                     float effTame1 = bands[1].isBypass ? 0.0f : bands[1].tame;
                     float effTame2 = bands[2].isBypass ? 0.0f : bands[2].tame;
                     float currentTame = (effTame0 * wLow) + (effTame1 * wMid) + (effTame2 * wHigh);
 
-                    float rawTameGain = 1.0f;
-                    if (currentTame > 0.0f && originalMag > env[i] && env[i] > 1e-12f) {
-                        float peakRatio = originalMag / env[i];
-                        rawTameGain = 1.0f / (1.0f + (peakRatio - 1.0f) * currentTame * 3.0f);
+                    float protectedTame = currentTame * tRatio;
+
+                    float tGain = 1.0f;
+                    if (protectedTame > 0.0f && rawMags[i] > env[i] && env[i] > 1e-12f) {
+                        float peakRatio = rawMags[i] / env[i];
+                        tGain = 1.0f / (1.0f + (peakRatio - 1.0f) * protectedTame);
                     }
+                    binTameGains[i] = tGain;
 
-                    float t0 = bands[0].isBypass ? 1.0f : (bands[0].isDelta ? (1.0f - rawTameGain) : rawTameGain);
-                    float t1 = bands[1].isBypass ? 1.0f : (bands[1].isDelta ? (1.0f - rawTameGain) : rawTameGain);
-                    float t2 = bands[2].isBypass ? 1.0f : (bands[2].isDelta ? (1.0f - rawTameGain) : rawTameGain);
+                    // Dynamic EQ (Threshold) の計算
+                    float dGain0 = 1.0f, dGain1 = 1.0f, dGain2 = 1.0f;
+                    float pureReductions[3] = { 1.0f, 1.0f, 1.0f };
 
-                    float finalTameGain = (t0 * wLow) + (t1 * wMid) + (t2 * wHigh);
+                    auto calcDynEQ = [&](int b, float& dGain, float& pureRed) {
+                        if (bands[b].isBypass) return;
+                        float excess = barkPower[barkIdx] - maskThresh[barkIdx] - bands[b].threshold;
+                        if (excess > 0.0f && !isOnset) {
+                            float reductionDB = excess * bands[b].depth * tRatio;
+                            pureRed = juce::Decibels::decibelsToGain(-reductionDB);
+                        }
+                        float shiftMult = (bands[b].tonalShift * tRatio) + (bands[b].transShift * (1.0f - tRatio));
+                        dGain = pureRed * shiftMult;
+                        };
+                    calcDynEQ(0, dGain0, pureReductions[0]);
+                    calcDynEQ(1, dGain1, pureReductions[1]);
+                    calcDynEQ(2, dGain2, pureReductions[2]);
 
-                    finalGain *= finalTameGain;
-                    originalMag *= finalTameGain; // 以降のダイナミクス処理に渡す
+                    // トータルゲイン計算と Delta / Solo ロジック
+                    float totalGain0 = tGain * dGain0;
+                    float totalGain1 = tGain * dGain1;
+                    float totalGain2 = tGain * dGain2;
 
-                    float blendedReduction = (pureReductionGains[0] * wLow) + (pureReductionGains[1] * wMid) + (pureReductionGains[2] * wHigh);
-                    if (blendedReduction < barkGR[barkIdx]) barkGR[barkIdx] = blendedReduction;
+                    if (bands[0].isDelta) totalGain0 = 1.0f - totalGain0;
+                    if (bands[1].isDelta) totalGain1 = 1.0f - totalGain1;
+                    if (bands[2].isDelta) totalGain2 = 1.0f - totalGain2;
 
                     if (anySolo) {
-                        float soloGain = 0.0f;
-                        if (bands[0].isSolo) soloGain += (bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0]) * wLow;
-                        if (bands[1].isSolo) soloGain += (bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1]) * wMid;
-                        if (bands[2].isSolo) soloGain += (bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2]) * wHigh;
-                        finalGain *= soloGain;
+                        if (!bands[0].isSolo) totalGain0 = 0.0f;
+                        if (!bands[1].isSolo) totalGain1 = 0.0f;
+                        if (!bands[2].isSolo) totalGain2 = 0.0f;
                     }
-                    else {
-                        float g0 = bands[0].isDelta ? (1.0f - targetGains[0]) : targetGains[0];
-                        float g1 = bands[1].isDelta ? (1.0f - targetGains[1]) : targetGains[1];
-                        float g2 = bands[2].isDelta ? (1.0f - targetGains[2]) : targetGains[2];
-                        finalGain *= (g0 * wLow) + (g1 * wMid) + (g2 * wHigh);
-                    }
-                    magnitudes[i] = originalMag * finalGain;
+
+                    float finalGain = (totalGain0 * wLow) + (totalGain1 * wMid) + (totalGain2 * wHigh);
+
+                    // FFTバッファへの書き戻し (ここで非正規化して元のスケールに戻す)
+                    magnitudes[i] *= finalGain;
                     binGains[i] = finalGain;
+
+                    float blendedReduction = (pureReductions[0] * wLow) + (pureReductions[1] * wMid) + (pureReductions[2] * wHigh);
+                    if (blendedReduction < barkGR[barkIdx]) barkGR[barkIdx] = blendedReduction;
                 }
 
+                // GUI へのデータ転送
                 if (ch == 0) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
@@ -351,24 +358,24 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     const int uiBins = 512;
                     const int binsPerUI = nBins / uiBins;
                     for (int i = 0; i < uiBins; ++i) {
-                        float sumP = 0.0f;
-                        float minTame = 1.0f; // ⚡ Tame描画用
+                        float sumPost = 0.0f;
+                        float sumPre = 0.0f;
+                        float minTame = 1.0f;
 
                         int startIdx = i * binsPerUI;
                         for (int j = 0; j < binsPerUI; ++j) {
                             int idx = startIdx + j;
                             if (idx < nBins) {
-                                float rawMag = (anySolo || bands[0].isDelta || bands[1].isDelta || bands[2].isDelta)
-                                    ? magnitudes[idx] : (magnitudes[idx] / (binGains[idx] + 1e-6f));
-                                sumP += rawMag * rawMag;
-
-                                // ⚡ Tameゲインを逆算して記録
-                                float tGain = (magnitudes[idx] + 1e-12f) / (rawMag + 1e-12f);
-                                if (tGain < minTame) minTame = tGain;
+                                // rawMags は 0dBFS正規化済み
+                                sumPre += rawMags[idx] * rawMags[idx];
+                                float postMag = rawMags[idx] * binGains[idx];
+                                sumPost += postMag * postMag;
+                                if (binTameGains[idx] < minTame) minTame = binTameGains[idx];
                             }
                         }
-                        frame.magnitudeSpectrum[static_cast<size_t>(i)] = std::sqrt(sumP / static_cast<float>(binsPerUI) + 1e-12f);
-                        frame.tameSpectrum[static_cast<size_t>(i)] = minTame;
+                        frame.unprocessedSpectrum[i] = std::sqrt(sumPre / binsPerUI + 1e-12f);
+                        frame.magnitudeSpectrum[i] = std::sqrt(sumPost / binsPerUI + 1e-12f);
+                        frame.tameSpectrum[i] = minTame;
                     }
                     analysisFifo.push(frame);
                 }
@@ -431,7 +438,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     if (isMsMode) msEncoder.decodeMidSide(buffer);
 
-    // ⚡ Stereo Width Processing (時間領域の絶対周波数処理)
     float wLow = cache.bands[0].width->load();
     float wMid = cache.bands[1].width->load();
     float wHigh = cache.bands[2].width->load();
