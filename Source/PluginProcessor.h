@@ -121,43 +121,66 @@ public:
 
         for (int i = 0; i < msBuffer.getNumSamples(); ++i)
         {
-            // --- Mid の分割と位相補償 (サブトラクション法) ---
+            // ==========================================================
+            // 1. 帯域分割と位相補償 (サブトラクション完全再構成)
+            // ==========================================================
+
+            // --- Mid チャンネル ---
             float m_low_pre = m_lp1.processSample(0, M[i]);
             float m_ap1_out = m_ap1.processSample(0, M[i]);
-            float m_rest = m_ap1_out - m_low_pre; // HPを使わず完全な残差を抽出
-
+            float m_rest = m_ap1_out - m_low_pre;
             float m_mi = m_lp2.processSample(0, m_rest);
             float m_ap2_out = m_ap2_rest.processSample(0, m_rest);
-            float m_hi = m_ap2_out - m_mi; // 完全な高域を抽出
+            float m_hi = m_ap2_out - m_mi;
+            float m_lo = m_ap2_low.processSample(0, m_low_pre);
 
-            float m_lo = m_ap2_low.processSample(0, m_low_pre); // 低域の位相補償
-
-            M[i] = m_lo + m_mi + m_hi;
-
-            // --- Side の分割と位相補償、および幅調整 (サブトラクション法) ---
+            // --- Side チャンネル ---
             float s_low_pre = s_lp1.processSample(0, S[i]);
             float s_ap1_out = s_ap1.processSample(0, S[i]);
             float s_rest = s_ap1_out - s_low_pre;
-
             float s_mi = s_lp2.processSample(0, s_rest);
             float s_ap2_out = s_ap2_rest.processSample(0, s_rest);
             float s_hi = s_ap2_out - s_mi;
-
             float s_lo = s_ap2_low.processSample(0, s_low_pre);
 
-            // 1. 低域 (Mono化方向へスケール)
+
+            // ==========================================================
+            // 2. 帯域別 Width コントロール (アルゴリズム適用)
+            // ==========================================================
+
+            // 【低域 (Low)】: モノラル化の徹底
+            // Mid成分は一切触らないため、キックやベースの音量・パンチは100%維持されます。
+            // wLow = 0.0 で安全かつ完璧に低域がセンターに定まります。
             s_lo *= wLow;
 
-            // 2. 中域 (ゲイン制御)
+            // 【中域 (Mid)】: ゲイン比率制御による自然な拡張
+            // ボーカルやスネアの芯（Mid）を保護しつつ、Side成分のみをスケールします。
+            // 複雑な位相操作を行わないため、モノラル再生時の音痩せ（位相キャンセル）が起きません。
             s_mi *= wMid;
 
-            // 3. 高域 (デコリレーション + ゲイン制御)
+            // 【高域 (High)】: シュレーダー・デコリレーション（位相分散）
+            // 常にデコリレーターに信号を通し、内部状態(State)を更新し続ける（ノイズ防止）
             float s_hi_decorr = decorrelator.processSample(s_hi);
-            float decorrAmt = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f); // 1.0以上で分散開始
-            s_hi = s_hi * (1.0f - decorrAmt) + s_hi_decorr * decorrAmt;
 
-            if (wHigh < 1.0f) s_hi *= wHigh; // 1.0未満は純粋なスケールダウン
+            if (wHigh > 1.0f)
+            {
+                // wHigh が 1.0 ～ 2.0 の間：
+                // 元のSideと「位相を複雑に散らしたSide」をクロスフェードし、
+                // スピーカーの外側から音が包み込むような立体感（広がり）を作ります。
+                float blend = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f);
+                s_hi = s_hi * (1.0f - blend) + s_hi_decorr * blend;
+            }
+            else
+            {
+                // wHigh が 1.0 以下の時：
+                // 位相分散は行わず、単純にSide成分の音量を下げてモノラル方向へ引き締めます。
+                s_hi *= wHigh;
+            }
 
+            // ==========================================================
+            // 3. 再合算
+            // ==========================================================
+            M[i] = m_lo + m_mi + m_hi;
             S[i] = s_lo + s_mi + s_hi;
         }
     }
