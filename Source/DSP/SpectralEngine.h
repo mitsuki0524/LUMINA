@@ -1,7 +1,5 @@
-// ==========================================
-// Source/DSP/SpectralEngine.h
-// ==========================================
 #pragma once
+
 #include <JuceHeader.h>
 #include <functional>
 #include <memory>
@@ -45,7 +43,6 @@ private:
     std::unique_ptr<juce::dsp::FFT> fft;
 
     // ⚡ AVX2/SIMD アライメントを考慮したメモリ管理
-    // std::vector を廃止し、JUCEのHeapBlockを利用してアライメント境界を確保
     juce::HeapBlock<float> inputFifo;
     juce::HeapBlock<float> outputFifo;
     juce::HeapBlock<float> inputHop;

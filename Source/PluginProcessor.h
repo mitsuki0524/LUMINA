@@ -1,6 +1,3 @@
-// ==========================================
-// Source/PluginProcessor.h
-// ==========================================
 #ifndef LUMINA_PLUGINPROCESSOR_H
 #define LUMINA_PLUGINPROCESSOR_H
 
@@ -27,15 +24,49 @@ struct BandParams {
     float depth;
     float tonalShift;
     float transShift;
-
     float attack;
     float release;
-
     bool isBypass;
     bool isSolo;
     bool isDelta;
 };
 
+// ⚡ 高域用 All-pass デコリレーター (Schroeder位相分散)
+class AllPassDecorrelator
+{
+public:
+    static constexpr int maxStages = 8;
+    struct AllPassStage { float coeff = 0.0f; float state = 0.0f; };
+
+    void prepare(double sampleRate) {
+        juce::ignoreUnused(sampleRate);
+        const float coeffTable[maxStages] = { 0.6151f, -0.3693f, 0.7823f, -0.4999f, 0.8347f, -0.2173f, 0.6879f, -0.5431f };
+        for (int i = 0; i < maxStages; ++i) {
+            stages[i].coeff = coeffTable[i] * 0.85f; // Intensity
+            stages[i].state = 0.0f;
+        }
+    }
+
+    void reset() {
+        for (auto& s : stages) s.state = 0.0f;
+    }
+
+    inline float processSample(float input) {
+        float x = input;
+        for (int i = 0; i < maxStages; ++i) {
+            const float a = stages[i].coeff;
+            const float y = a * x + stages[i].state;
+            stages[i].state = x - a * y;
+            x = y;
+        }
+        return x;
+    }
+
+private:
+    std::array<AllPassStage, maxStages> stages;
+};
+
+// ⚡ 位相補償付き 3バンド Linkwitz-Riley M/S 幅操作エンジン (サブトラクション完全再構成版)
 class StereoWidthEngine
 {
 public:
@@ -45,87 +76,96 @@ public:
     {
         juce::dsp::ProcessSpec spec{ sampleRate, (juce::uint32)samplesPerBlock, 1 };
 
-        lp1.prepare(spec); hp1.prepare(spec);
-        lp2.prepare(spec); hp2.prepare(spec);
-        ap1_lo.prepare(spec); ap1_hi.prepare(spec); ap2_lo.prepare(spec);
+        m_lp1.prepare(spec); m_lp2.prepare(spec);
+        m_ap1.prepare(spec); m_ap2_rest.prepare(spec); m_ap2_low.prepare(spec);
 
-        lp1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
-        hp1.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
-        lp2.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
-        hp2.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
-        ap1_lo.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-        ap1_hi.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-        ap2_lo.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+        s_lp1.prepare(spec); s_lp2.prepare(spec);
+        s_ap1.prepare(spec); s_ap2_rest.prepare(spec); s_ap2_low.prepare(spec);
 
-        lp1.setCutoffFrequency(200.0f); hp1.setCutoffFrequency(200.0f);
-        ap1_lo.setCutoffFrequency(200.0f); ap1_hi.setCutoffFrequency(200.0f);
-        lp2.setCutoffFrequency(5000.0f); hp2.setCutoffFrequency(5000.0f);
-        ap2_lo.setCutoffFrequency(5000.0f);
+        auto setTypes = [](juce::dsp::LinkwitzRileyFilter<float>& lp1, juce::dsp::LinkwitzRileyFilter<float>& lp2,
+            juce::dsp::LinkwitzRileyFilter<float>& ap1, juce::dsp::LinkwitzRileyFilter<float>& ap2_rest,
+            juce::dsp::LinkwitzRileyFilter<float>& ap2_low)
+            {
+                lp1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+                lp2.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+                ap1.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+                ap2_rest.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+                ap2_low.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+            };
 
-        const float coeffTable[4] = { 0.6151f, -0.3693f, 0.7823f, -0.4999f };
-        for (int i = 0; i < 4; ++i) {
-            stages[i].coeff = coeffTable[i] * 0.45f;
-            stages[i].state = 0.0f;
-        }
+        setTypes(m_lp1, m_lp2, m_ap1, m_ap2_rest, m_ap2_low);
+        setTypes(s_lp1, s_lp2, s_ap1, s_ap2_rest, s_ap2_low);
+
+        decorrelator.prepare(sampleRate);
     }
 
     void setCutoffs(float lowFreq, float highFreq)
     {
-        lp1.setCutoffFrequency(lowFreq); hp1.setCutoffFrequency(lowFreq);
-        ap1_lo.setCutoffFrequency(lowFreq); ap1_hi.setCutoffFrequency(lowFreq);
-        lp2.setCutoffFrequency(highFreq); hp2.setCutoffFrequency(highFreq);
-        ap2_lo.setCutoffFrequency(highFreq);
+        m_lp1.setCutoffFrequency(lowFreq);
+        m_ap1.setCutoffFrequency(lowFreq);
+        m_lp2.setCutoffFrequency(highFreq);
+        m_ap2_rest.setCutoffFrequency(highFreq);
+        m_ap2_low.setCutoffFrequency(highFreq);
+
+        s_lp1.setCutoffFrequency(lowFreq);
+        s_ap1.setCutoffFrequency(lowFreq);
+        s_lp2.setCutoffFrequency(highFreq);
+        s_ap2_rest.setCutoffFrequency(highFreq);
+        s_ap2_low.setCutoffFrequency(highFreq);
     }
 
-    void processStereoWidth(juce::AudioBuffer<float>& buffer, float wLow, float wMid, float wHigh)
+    void processMS(juce::AudioBuffer<float>& msBuffer, float wLow, float wMid, float wHigh)
     {
-        float* L = buffer.getWritePointer(0);
-        float* R = buffer.getWritePointer(1);
+        float* M = msBuffer.getWritePointer(0);
+        float* S = msBuffer.getWritePointer(1);
 
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        for (int i = 0; i < msBuffer.getNumSamples(); ++i)
         {
-            float M = (L[i] + R[i]) * 0.5f;
-            float S = (L[i] - R[i]) * 0.5f;
+            // --- Mid の分割と位相補償 (サブトラクション法) ---
+            float m_low_pre = m_lp1.processSample(0, M[i]);
+            float m_ap1_out = m_ap1.processSample(0, M[i]);
+            float m_rest = m_ap1_out - m_low_pre; // HPを使わず完全な残差を抽出
 
-            float low_prelim = lp1.processSample(0, S);
-            float rest = hp1.processSample(0, S);
-            float mid_prelim = lp2.processSample(0, rest);
-            float high_out = hp2.processSample(0, rest);
+            float m_mi = m_lp2.processSample(0, m_rest);
+            float m_ap2_out = m_ap2_rest.processSample(0, m_rest);
+            float m_hi = m_ap2_out - m_mi; // 完全な高域を抽出
 
-            float s_low = ap2_lo.processSample(0, ap1_lo.processSample(0, low_prelim));
-            float s_mid = ap1_hi.processSample(0, mid_prelim);
-            float s_high = high_out;
+            float m_lo = m_ap2_low.processSample(0, m_low_pre); // 低域の位相補償
 
-            s_low *= wLow;
-            s_mid *= wMid;
+            M[i] = m_lo + m_mi + m_hi;
 
-            float s_hi_decorr = s_high;
-            for (int k = 0; k < 4; ++k) {
-                float y = stages[k].coeff * s_hi_decorr + stages[k].state;
-                stages[k].state = s_hi_decorr - stages[k].coeff * y;
-                s_hi_decorr = y;
-            }
+            // --- Side の分割と位相補償、および幅調整 (サブトラクション法) ---
+            float s_low_pre = s_lp1.processSample(0, S[i]);
+            float s_ap1_out = s_ap1.processSample(0, S[i]);
+            float s_rest = s_ap1_out - s_low_pre;
 
-            float amount = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f);
-            float s_high_L = s_high;
-            float s_high_R = s_high * (1.0f - amount) + s_hi_decorr * amount;
-            if (wHigh < 1.0f) {
-                s_high_L *= wHigh;
-                s_high_R *= wHigh;
-            }
+            float s_mi = s_lp2.processSample(0, s_rest);
+            float s_ap2_out = s_ap2_rest.processSample(0, s_rest);
+            float s_hi = s_ap2_out - s_mi;
 
-            float final_S_L = s_low + s_mid + s_high_L;
-            float final_S_R = s_low + s_mid + s_high_R;
+            float s_lo = s_ap2_low.processSample(0, s_low_pre);
 
-            L[i] = M + final_S_L;
-            R[i] = M - final_S_R;
+            // 1. 低域 (Mono化方向へスケール)
+            s_lo *= wLow;
+
+            // 2. 中域 (ゲイン制御)
+            s_mi *= wMid;
+
+            // 3. 高域 (デコリレーション + ゲイン制御)
+            float s_hi_decorr = decorrelator.processSample(s_hi);
+            float decorrAmt = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f); // 1.0以上で分散開始
+            s_hi = s_hi * (1.0f - decorrAmt) + s_hi_decorr * decorrAmt;
+
+            if (wHigh < 1.0f) s_hi *= wHigh; // 1.0未満は純粋なスケールダウン
+
+            S[i] = s_lo + s_mi + s_hi;
         }
     }
 
 private:
-    juce::dsp::LinkwitzRileyFilter<float> lp1, hp1, lp2, hp2, ap1_lo, ap1_hi, ap2_lo;
-    struct AllPassStage { float coeff; float state; };
-    std::array<AllPassStage, 4> stages;
+    juce::dsp::LinkwitzRileyFilter<float> m_lp1, m_lp2, m_ap1, m_ap2_rest, m_ap2_low;
+    juce::dsp::LinkwitzRileyFilter<float> s_lp1, s_lp2, s_ap1, s_ap2_rest, s_ap2_low;
+    AllPassDecorrelator decorrelator;
 };
 
 class LUMINAProcessor : public juce::AudioProcessor
@@ -181,8 +221,15 @@ private:
     juce::AudioBuffer<float> dryDelayBuffer;
     int delayWritePosition = 0;
 
-    std::array<std::array<float, 24>, 2> dynEnvelopes{};
+    // ⚡ Lookahead リングバッファ
+    juce::AudioBuffer<float> lookaheadBuffer;
+    int lookaheadWritePos = 0;
 
+    // ⚡ Oversampling モジュール
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    int currentOversamplingState = 0;
+
+    std::array<std::array<float, 24>, 2> dynEnvelopes{};
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;

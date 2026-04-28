@@ -1,6 +1,3 @@
-// ==========================================
-// Source/DSP/SpectralEngine.cpp
-// ==========================================
 #include "SpectralEngine.h"
 
 void SpectralEngine::prepare(double sampleRate, int fftSize, float overlapRatio)
@@ -19,7 +16,6 @@ void SpectralEngine::prepare(double sampleRate, int fftSize, float overlapRatio)
     inputHop.allocate(static_cast<size_t>(hopSize), true);
     outputHop.allocate(static_cast<size_t>(hopSize), true);
 
-    // FFT用バッファは実部と虚部で 2 * fftSize 必要
     timeData.allocate(static_cast<size_t>(fftSize * 2), true);
 
     int numBins = fftSize / 2 + 1;
@@ -33,54 +29,53 @@ void SpectralEngine::prepare(double sampleRate, int fftSize, float overlapRatio)
     fifoIndex = 0;
 }
 
-// ⚡ 第1種0次の変形ベッセル関数 I0(x) の近似計算
+// ⚡ 第1種0次の変形ベッセル関数 I0(x) の厳密な近似計算 (30次まで拡張して精度向上)
 float SpectralEngine::besselI0(float x)
 {
     float sum = 1.0f;
     float term = 1.0f;
     const float xHalf = x * 0.5f;
-    for (int k = 1; k <= 25; ++k)
+    for (int k = 1; k <= 30; ++k)
     {
-        term *= (xHalf / static_cast<float>(k));
-        term *= (xHalf / static_cast<float>(k));
+        const float kFloat = static_cast<float>(k);
+        term *= (xHalf / kFloat) * (xHalf / kFloat);
         sum += term;
-        if (term < 1e-10f * sum) break;
+        if (term < 1e-12f * sum) break;
     }
     return sum;
 }
 
-// ⚡ 周期型 Kaiser 窓の生成と、WOLAオーバーラップ補正係数の厳密計算
 void SpectralEngine::generateKaiserWindow(int size, float beta)
 {
     const float denominator = besselI0(beta);
     const float N = static_cast<float>(size);
 
-    for (int n = 0; n < size; ++n)
-    {
-        // 周期型窓 (Periodic Window) として生成 (-1.0 to 1.0 の範囲)
+    // 1. 標準的な Kaiser 窓の生成
+    for (int n = 0; n < size; ++n) {
         const float x = (2.0f * static_cast<float>(n) / N) - 1.0f;
         const float arg = beta * std::sqrt(std::max(0.0f, 1.0f - x * x));
         window[n] = besselI0(arg) / denominator;
     }
 
-    // ⚡ OLAゲイン補正係数の厳密な計算
-    // 窓関数を2回適用（分析・合成）し、hopSizeごとにオーバーラップ加算した際の定常ゲインを求める
-    double olaSum = 0.0;
-    for (int n = 0; n < hopSize; ++n)
-    {
-        double frameSum = 0.0;
-        const int numOverlaps = size / hopSize;
-        for (int k = 0; k < numOverlaps; ++k)
-        {
-            float w = window[n + k * hopSize];
-            frameSum += static_cast<double>(w) * w; // WOLAなので自乗
-        }
-        olaSum += frameSum;
+    // 2. ⚡ 完璧なヌル（-100dB以下）を実現するための「COLA正規化」 ⚡
+    // 窓をホップサイズごとに重ね合わせた時の合計値を、位相（0～hopSize-1）ごとに計算します
+    std::vector<double> overlapSum(static_cast<size_t>(hopSize), 0.0);
+    for (int n = 0; n < size; ++n) {
+        double w = static_cast<double>(window[n]);
+        overlapSum[static_cast<size_t>(n % hopSize)] += (w * w); // WOLAなので自乗和
     }
 
-    // 1サンプルの平均積算値の逆数を補正係数とする
-    double avgOLA = olaSum / static_cast<double>(hopSize);
-    gainCorrection = static_cast<float>(1.0 / avgOLA);
+    // 3. 各サンプルを、その位置の合計値の平方根で割ります
+    // これにより、オーバーラップ加算後の振幅が「時間軸上のどこでも完全に1.0」になります
+    for (int n = 0; n < size; ++n) {
+        double s = overlapSum[static_cast<size_t>(n % hopSize)];
+        if (s > 1e-15) {
+            window[n] /= static_cast<float>(std::sqrt(s));
+        }
+    }
+
+    // 窓自体が正規化されたため、一律のゲイン補正は不要（1.0）
+    gainCorrection = 1.0f;
 }
 
 void SpectralEngine::setProcessingCallback(ProcessingCallback callback)

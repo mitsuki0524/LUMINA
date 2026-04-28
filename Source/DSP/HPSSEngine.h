@@ -4,11 +4,13 @@
 #include <JuceHeader.h>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 
 /**
  * @class HPSSEngine
  * @brief Harmonic-Percussive Source Separation (HPSS) エンジン。
  * 時間方向と周波数方向のメジアンフィルタを用いて、持続音と打撃音の分離マスクを生成します。
+ * Proパラメータ（Res, Blur）のリアルタイム操作を想定し、バッファは事前最大確保されます。
  */
 class HPSSEngine
 {
@@ -17,20 +19,22 @@ public:
     ~HPSSEngine() = default;
 
     /**
-     * @brief 解析バッファの初期化と領域確保
+     * @brief 解析バッファの初期化と領域確保（DSP Safetyのため最大サイズで事前確保）
      * @param maxBins 最大周波数ビン数
-     * @param harmonicLen 時間方向のメジアン窓幅 (奇数)
-     * @param percussiveLen 周波数方向のメジアン窓幅 (奇数)
+     * @param maxHarmonicLen 時間方向の最大メジアン窓幅
+     * @param maxPercussiveLen 周波数方向の最大メジアン窓幅
      */
-    void prepare(int maxBins, int harmonicLen = 17, int percussiveLen = 31);
+    void prepare(int maxBins, int maxHarmonicLen = 65, int maxPercussiveLen = 65);
 
     /**
      * @brief 最新のパワースペクトルから分離マスクを算出
      * @param currentPower 現在のフレームのパワースペクトル [numBins]
      * @param tonalMask 結果を格納する配列 (0.0~1.0) [numBins]
      * @param numBins 処理するビン数
+     * @param resValue 時間方向の解像度 (HPSS Res)
+     * @param blurValue マスク境界の平滑化係数 (HPSS Blur)
      */
-    void process(const float* currentPower, float* tonalMask, int numBins);
+    void process(const float* currentPower, float* tonalMask, int numBins, float resValue = 17.0f, float blurValue = 1.0f);
 
 private:
     /**
@@ -38,9 +42,9 @@ private:
      */
     inline float calculateMedian(std::vector<float>& workspace, int actualSize);
 
-    // パラメータ
-    int hLen = 17;
-    int pLen = 31;
+    // 最大パラメータ設定
+    int maxHLen = 65;
+    int maxPLen = 65;
     int nBins = 0;
 
     // 解析用履歴管理 (リングバッファ)
