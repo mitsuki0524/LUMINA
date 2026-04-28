@@ -47,6 +47,21 @@ private:
     juce::TextButton autoBandButton;
     juce::ProgressBar autoBandProgress;
 
+    // ⚡ Pro Mode Controls (Global)
+    juce::ToggleButton proModeButton;
+
+    juce::ComboBox oversamplingCombo;
+    juce::Label oversamplingLabel;
+
+    juce::Slider lookaheadSlider;
+    juce::Label lookaheadLabel;
+
+    juce::Slider widthCross1Slider;
+    juce::Label widthCross1Label;
+
+    juce::Slider widthCross2Slider;
+    juce::Label widthCross2Label;
+
     // --- Master Section ---
     juce::Label masterTitle;
     juce::Slider masterInSlider;
@@ -66,7 +81,6 @@ private:
     juce::ToggleButton bandSolo[3];
     juce::ToggleButton bandDelta[3];
 
-    // ⚡ 砂時計用スライダー (Tame / Width)
     juce::Slider bandTame[3];
     juce::Label bandTameLabel[3];
     juce::Slider bandWidth[3];
@@ -76,6 +90,17 @@ private:
     juce::Label bandLabelsM[3][4];
     juce::Slider bandSlidersS[3][4];
     juce::Label bandLabelsS[3][4];
+
+    // ⚡ Pro Mode Controls (Per Band 3x3 Grid)
+    juce::Slider proTameSharp[3];  juce::Label proTameSharpLabel[3];
+    juce::Slider proTameSpeed[3];  juce::Label proTameSpeedLabel[3];
+    juce::Slider proAttackM[3];    juce::Label proAttackMLabel[3];
+    juce::Slider proAttackS[3];    juce::Label proAttackSLabel[3];
+    juce::Slider proReleaseM[3];   juce::Label proReleaseMLabel[3];
+    juce::Slider proReleaseS[3];   juce::Label proReleaseSLabel[3];
+    juce::Slider proHpssBlur[3];   juce::Label proHpssBlurLabel[3];
+    juce::Slider proHpssRes[3];    juce::Label proHpssResLabel[3];
+    juce::Slider proLinkAmt[3];    juce::Label proLinkAmtLabel[3];
 
     // --- APVTS Attachments ---
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -87,11 +112,16 @@ private:
     std::unique_ptr<ButtonAttachment> autoBandAttachment;
     std::unique_ptr<ComboBoxAttachment> autoBandTimeAttachment;
 
+    std::unique_ptr<ButtonAttachment> proModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<SliderAttachment> lookaheadAttachment;
+    std::unique_ptr<SliderAttachment> widthCross1Attachment;
+    std::unique_ptr<SliderAttachment> widthCross2Attachment;
+
     std::unique_ptr<SliderAttachment> masterInAttachment;
     std::unique_ptr<SliderAttachment> masterOutAttachment;
     std::unique_ptr<SliderAttachment> masterDryWetAttachment;
 
-    // ⚡ Tame / Width アタッチメント
     std::unique_ptr<SliderAttachment> bandTameAttachments[3];
     std::unique_ptr<SliderAttachment> bandWidthAttachments[3];
 
@@ -102,6 +132,17 @@ private:
     std::unique_ptr<ButtonAttachment> bandSoloAttachments[3];
     std::unique_ptr<ButtonAttachment> bandDeltaAttachments[3];
     std::unique_ptr<ButtonAttachment> bandLinkAttachments[3];
+
+    // ⚡ Pro Mode Per-Band Attachments
+    std::unique_ptr<SliderAttachment> proTameSharpAtt[3];
+    std::unique_ptr<SliderAttachment> proTameSpeedAtt[3];
+    std::unique_ptr<SliderAttachment> proAttackMAtt[3];
+    std::unique_ptr<SliderAttachment> proAttackSAtt[3];
+    std::unique_ptr<SliderAttachment> proReleaseMAtt[3];
+    std::unique_ptr<SliderAttachment> proReleaseSAtt[3];
+    std::unique_ptr<SliderAttachment> proHpssBlurAtt[3];
+    std::unique_ptr<SliderAttachment> proHpssResAtt[3];
+    std::unique_ptr<SliderAttachment> proLinkAmtAtt[3];
 
     AnalysisFrame latestFrame{};
     bool currentTabIsSide[3] = { false, false, false };

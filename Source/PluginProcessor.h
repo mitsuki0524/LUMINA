@@ -64,6 +64,15 @@ public:
         }
     }
 
+    // ⚡ 追加: Widthエンジンの独立したクロスオーバー設定用
+    void setCutoffs(float lowFreq, float highFreq)
+    {
+        lp1.setCutoffFrequency(lowFreq); hp1.setCutoffFrequency(lowFreq);
+        ap1_lo.setCutoffFrequency(lowFreq); ap1_hi.setCutoffFrequency(lowFreq);
+        lp2.setCutoffFrequency(highFreq); hp2.setCutoffFrequency(highFreq);
+        ap2_lo.setCutoffFrequency(highFreq);
+    }
+
     void processStereoWidth(juce::AudioBuffer<float>& buffer, float wLow, float wMid, float wHigh)
     {
         float* L = buffer.getWritePointer(0);
@@ -165,8 +174,6 @@ private:
     std::array<std::vector<float>, 2> tameGainsWorkspaces;
 
     juce::AudioBuffer<float> inputCopyBuffer;
-
-    // ⚡ 追加: Dry/Wet時のレイテンシー補正（コムフィルタ防止）用バッファ
     juce::AudioBuffer<float> dryDelayBuffer;
     int delayWritePosition = 0;
 
@@ -175,7 +182,14 @@ private:
     double mSampleRate = 44100.0;
     int mFftSize = 4096;
 
+    // ⚡ 拡張: Proモード用のキャッシュ変数を追加
     struct ParamCache {
+        std::atomic<float>* proMode = nullptr;
+        std::atomic<float>* oversampling = nullptr;
+        std::atomic<float>* lookahead = nullptr;
+        std::atomic<float>* widthCross1 = nullptr;
+        std::atomic<float>* widthCross2 = nullptr;
+
         std::atomic<float>* cross1 = nullptr;
         std::atomic<float>* cross2 = nullptr;
         std::atomic<float>* msMode = nullptr;
@@ -202,6 +216,17 @@ private:
             std::atomic<float>* solo = nullptr;
             std::atomic<float>* delta = nullptr;
             std::atomic<float>* link = nullptr;
+
+            // --- Pro Mode Per-Band ---
+            std::atomic<float>* tameSharp = nullptr;
+            std::atomic<float>* tameSpeed = nullptr;
+            std::atomic<float>* attackM = nullptr;
+            std::atomic<float>* attackS = nullptr;
+            std::atomic<float>* releaseM = nullptr;
+            std::atomic<float>* releaseS = nullptr;
+            std::atomic<float>* hpssBlur = nullptr;
+            std::atomic<float>* hpssRes = nullptr;
+            std::atomic<float>* linkAmt = nullptr;
         } bands[3];
     } cache;
 
