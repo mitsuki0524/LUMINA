@@ -36,7 +36,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "WIDTH_CROSS_2", 1 }, "Width High Freq", 1000.0f, 20000.0f, 5000.0f));
 
-    // ⚡ Auto Level Time 選択用コンボ
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{ "AUTO_LEVEL_TIME_PRO", 1 }, "Auto Level Time",
         juce::StringArray{ "Short (3s)", "Mid (10s)", "Long (30s)", "Integrated" }, 1));
@@ -70,6 +69,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ "AUTO_BAND", 1 }, "Auto Band Trigger", false));
 
+    juce::NormalisableRange<float> tonalRange(-24.0f, 24.0f, 0.01f);
+    tonalRange.setSkewForCentre(0.0f);
+
     juce::StringArray bandPrefixes = { "B1_", "B2_", "B3_" };
     juce::StringArray bandNames = { "Low ", "Mid ", "High " };
 
@@ -81,28 +83,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "TAME", 1 }, nm + "Tame M", 0.0f, 1.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TAME_S", 1 }, nm + "Tame S", 0.0f, 1.0f, 0.0f)); // ⚡ 追加
+            juce::ParameterID{ pfx + "TAME_S", 1 }, nm + "Tame S", 0.0f, 1.0f, 0.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "WIDTH", 1 }, nm + "Width", 0.0f, 2.0f, 1.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "THRESH_M", 1 }, nm + "Thresh M", -60.0f, 0.0f, 0.0f));
+
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "DEPTH_M", 1 }, nm + "Depth M", 0.0f, 1.0f, 0.5f));
+            juce::ParameterID{ pfx + "DEPTH_M", 1 }, nm + "Depth M", 0.0f, 1.0f, 0.0f));
+
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TONAL_M", 1 }, nm + "Tonal M", -24.0f, 24.0f, 0.0f));
+            juce::ParameterID{ pfx + "TONAL_M", 1 }, nm + "Tonal M", tonalRange, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TRANS_M", 1 }, nm + "Trans M", -24.0f, 24.0f, 0.0f));
+            juce::ParameterID{ pfx + "TRANS_M", 1 }, nm + "Trans M", tonalRange, 0.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "THRESH_S", 1 }, nm + "Thresh S", -60.0f, 0.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "DEPTH_S", 1 }, nm + "Depth S", 0.0f, 1.0f, 0.5f));
+            juce::ParameterID{ pfx + "DEPTH_S", 1 }, nm + "Depth S", 0.0f, 1.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TONAL_S", 1 }, nm + "Tonal S", -24.0f, 24.0f, 0.0f));
+            juce::ParameterID{ pfx + "TONAL_S", 1 }, nm + "Tonal S", tonalRange, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "TRANS_S", 1 }, nm + "Trans S", -24.0f, 24.0f, 0.0f));
+            juce::ParameterID{ pfx + "TRANS_S", 1 }, nm + "Trans S", tonalRange, 0.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{ pfx + "BYPASS", 1 }, nm + "Bypass", false));
@@ -118,14 +122,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParam
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "TAME_SPEED", 1 }, nm + "Tame Speed", 0.1f, 0.99f, 0.92f));
 
+        float defaultAtk = (i == 0) ? 15.0f : ((i == 1) ? 5.0f : 2.0f);
+        float defaultRel = (i == 0) ? 150.0f : ((i == 1) ? 50.0f : 20.0f);
+
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "ATTACK_M", 1 }, nm + "Attack M", 0.0f, 100.0f, 0.0f));
+            juce::ParameterID{ pfx + "ATTACK_M", 1 }, nm + "Attack M", 0.0f, 100.0f, defaultAtk));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "ATTACK_S", 1 }, nm + "Attack S", 0.0f, 100.0f, 0.0f));
+            juce::ParameterID{ pfx + "ATTACK_S", 1 }, nm + "Attack S", 0.0f, 100.0f, defaultAtk));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "RELEASE_M", 1 }, nm + "Release M", 0.0f, 500.0f, 0.0f));
+            juce::ParameterID{ pfx + "RELEASE_M", 1 }, nm + "Release M", 0.0f, 500.0f, defaultRel));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{ pfx + "RELEASE_S", 1 }, nm + "Release S", 0.0f, 500.0f, 0.0f));
+            juce::ParameterID{ pfx + "RELEASE_S", 1 }, nm + "Release S", 0.0f, 500.0f, defaultRel));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{ pfx + "HPSS_BLUR", 1 }, nm + "HPSS Blur", 0.1f, 2.0f, 1.0f));
@@ -161,7 +168,7 @@ void LUMINAProcessor::updateParamCache()
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
     for (int i = 0; i < 3; ++i) {
         cache.bands[i].tame = apvts.getRawParameterValue(prefixes[i] + "TAME");
-        cache.bands[i].tameS = apvts.getRawParameterValue(prefixes[i] + "TAME_S"); // ⚡ 追加
+        cache.bands[i].tameS = apvts.getRawParameterValue(prefixes[i] + "TAME_S");
         cache.bands[i].width = apvts.getRawParameterValue(prefixes[i] + "WIDTH");
         cache.bands[i].threshM = apvts.getRawParameterValue(prefixes[i] + "THRESH_M");
         cache.bands[i].depthM = apvts.getRawParameterValue(prefixes[i] + "DEPTH_M");
@@ -217,7 +224,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     dryDelayBuffer.clear();
     delayWritePosition = 0;
 
-    // ⚡ エンベロープ初期化
     for (int ch = 0; ch < 2; ++ch) dynEnvelopes[ch].fill(1.0f);
 
     analyzerCore.prepare(sampleRate, mFftSize, hopSize);
@@ -304,8 +310,10 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         bands[b].release = cache.bands[b].releaseM->load();
                     }
                     bands[b].isBypass = cache.bands[b].bypass->load() > 0.5f;
+                    // ⚡ Soloフラグを確実にブール値として評価
                     bands[b].isSolo = cache.bands[b].solo->load() > 0.5f;
                     bands[b].isDelta = cache.bands[b].delta->load() > 0.5f;
+
                     if (bands[b].isSolo) anySolo = true;
 
                     tameSharp[b] = cache.bands[b].tameSharp->load();
@@ -400,6 +408,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[1].isDelta) totalGain1 = 1.0f - totalGain1;
                     if (bands[2].isDelta) totalGain2 = 1.0f - totalGain2;
 
+                    // ⚡ Solo時のミュート適用ロジック
                     if (anySolo) {
                         if (!bands[0].isSolo) totalGain0 = 0.0f;
                         if (!bands[1].isSolo) totalGain1 = 0.0f;
@@ -407,6 +416,8 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     }
 
                     float finalGain = (totalGain0 * wLow) + (totalGain1 * wMid) + (totalGain2 * wHigh);
+
+                    // ⚡ 最終ゲインの適用（ここが0になれば音声は消えます）
                     magnitudes[i] *= finalGain;
                     binGains[i] = finalGain;
 
@@ -414,13 +425,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (blendedReduction < barkTargetGR[barkIdx]) barkTargetGR[barkIdx] = blendedReduction;
                 }
 
-                // ⚡ Attack / Release エンベロープフォロワーの適用 (GRメーターおよび将来のゲイン平滑化用)
                 for (int bark = 0; bark < 24; ++bark) {
                     float target = barkTargetGR[bark];
                     float current = dynEnvelopes[ch][bark];
 
                     float activeAtk = 0.0f; float activeRel = 0.0f;
-                    // 簡易的に影響の強い帯域の時間を採用
                     if (bark < 8) { activeAtk = bands[0].attack; activeRel = bands[0].release; }
                     else if (bark < 16) { activeAtk = bands[1].attack; activeRel = bands[1].release; }
                     else { activeAtk = bands[2].attack; activeRel = bands[2].release; }
@@ -432,13 +441,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     else dynEnvelopes[ch][bark] = current * relCoeff + target * (1.0f - relCoeff);
                 }
 
-                // ⚡ GUI へのデータ転送 (Mid/SideのGR両方を同時に送るため、RightCh処理後にプッシュする設計に変更)
-                // ※ AnalysisFifo をステレオデータ保持用に更新 (簡略化のためch==1のタイミングでプッシュ)
                 if (ch == 1 || !isMsMode) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
-                    frame.barkPower = barkPower; // 表示用は直近チャンネルのパワー
+                    frame.barkPower = barkPower;
 
                     for (int i = 0; i < 24; ++i) {
                         frame.barkGainReductionM[i] = dynEnvelopes[0][i];
@@ -522,11 +529,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
             analyzerCore.startAutoBand(timeSec);
         }
     }
-
-    // ⚡ Auto Level の参照時間適用
-    float alTimeSetting = cache.autoLevelTimePro->load();
-    float alTimeSec = (alTimeSetting == 0.0f) ? 3.0f : (alTimeSetting == 1.0f ? 10.0f : (alTimeSetting == 2.0f ? 30.0f : 0.0f)); // 0.0f=無限(Integrated)
-    juce::ignoreUnused(alTimeSec); // 次期AnalyzerCoreアップデートで適用
 
     const bool isMsMode = cache.msMode->load() > 0.5f;
     if (isMsMode) msEncoder.encodeMidSide(buffer);

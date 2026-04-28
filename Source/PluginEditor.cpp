@@ -16,7 +16,6 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     addAndMakeVisible(grMeter);
     grMeter.setInterceptsMouseClicks(false, false);
 
-    // --- Global Controls ---
     msModeButton.setButtonText("M/S Mode");
     addAndMakeVisible(msModeButton);
     msModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "MS_MODE", msModeButton);
@@ -33,24 +32,22 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     autoLevelCommitBtn.setButtonText("Commit");
     addAndMakeVisible(autoLevelCommitBtn);
     autoLevelCommitBtn.onClick = [this] {
-        float currentGain = processor.analyzerCore.getMatchingGain();
-        float deltaDB = juce::Decibels::gainToDecibels(currentGain);
         float currentOut = processor.apvts.getRawParameterValue("MASTER_OUT")->load();
-        float newOut = juce::jlimit(-24.0f, 24.0f, currentOut + deltaDB);
+        float newOut = juce::jlimit(-24.0f, 24.0f, currentOut + displayDiffDB);
 
         if (auto* param = processor.apvts.getParameter("MASTER_OUT"))
             param->setValueNotifyingHost(param->convertTo0to1(newOut));
 
         if (auto* param = processor.apvts.getParameter("AUTO_LEVEL"))
             param->setValueNotifyingHost(0.0f);
+
+        displayDiffDB = 0.0f;
         };
 
-    // ⚡ Pro Mode Button
     proModeButton.setButtonText("Professional");
     addAndMakeVisible(proModeButton);
     proModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "PRO_MODE", proModeButton);
 
-    // ⚡ A.LevelTime (ラベルを削除し、コンボボックスのみに)
     autoLevelTimeCombo.addItemList({ "Short (3s)", "Mid (10s)", "Long (30s)", "Integrated" }, 1);
     autoLevelTimeCombo.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(autoLevelTimeCombo);
@@ -82,7 +79,6 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         addChildComponent(l);
         };
 
-    // --- Master & Global Pro Section ---
     auto setupMasterSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name, bool isVertical) {
         if (isVertical) {
             s.setSliderStyle(juce::Slider::LinearVertical);
@@ -153,13 +149,10 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         tabSide[b].onClick = [this, b] { setBandTab(b, true); };
         bandLinkAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "LINK", bandLink[b]);
 
+        // ⚡ Soloボタン類の堅牢な初期化（APVTSバインディングの衝突防止）
         bandBypass[b].setButtonText("Bypass");
         bandSolo[b].setButtonText("Solo");
         bandDelta[b].setButtonText("Delta");
-
-        bandBypass[b].setClickingTogglesState(true);
-        bandSolo[b].setClickingTogglesState(true);
-        bandDelta[b].setClickingTogglesState(true);
 
         addAndMakeVisible(bandBypass[b]);
         addAndMakeVisible(bandSolo[b]);
@@ -199,7 +192,6 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
             bandAttachmentsS[b][p] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + paramNames[p] + "_S", bandSlidersS[b][p]);
         }
 
-        // ⚡ Pro Knobs Setup
         setupRotary(proTameSharp[b], proTameSharpLabel[b], "Sharpness");
         proTameSharpAtt[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME_SHARP", proTameSharp[b]);
 
@@ -339,37 +331,18 @@ void LUMINAEditor::resized()
     lookaheadLabel.setBounds(masterArea.removeFromTop(15));
     lookaheadSlider.setBounds(masterArea.removeFromTop(60));
 
-    // ⚡ Global Row (Top bar) - ご指示いただいた完璧な並び順に再計算
     auto globalRow = mainArea.removeFromTop(40);
 
-    // 1. M/S Mode
     msModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
-
-    // 2. Auto Level
     autoLevelButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
-
-    // 3. A.Level Time Combo (名称なしで隣接)
     autoLevelTimeCombo.setBounds(globalRow.removeFromLeft(95).withSizeKeepingCentre(85, 24));
-
-    // 4. Diff Label
     autoLevelValueLabel.setBounds(globalRow.removeFromLeft(65).withSizeKeepingCentre(60, 20));
-
-    // 5. Commit
     autoLevelCommitBtn.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 24));
-
-    // 6. Professional
     proModeButton.setBounds(globalRow.removeFromLeft(95).withSizeKeepingCentre(85, 24));
 
-    // --- Right Aligned (右端から配置) ---
-    // 9. Auto Band
     autoBandButton.setBounds(globalRow.removeFromRight(90).withSizeKeepingCentre(80, 30));
-
-    // 8. Ready (Progress Bar)
     autoBandProgress.setBounds(globalRow.removeFromRight(150).withSizeKeepingCentre(140, 20));
-
-    // 7. Auto Band Time Combo
     autoBandTimeCombo.setBounds(globalRow.removeFromRight(70).withSizeKeepingCentre(60, 24));
-
 
     mainArea.removeFromTop(10);
     int panelWidth = mainArea.getWidth() / 3;
@@ -397,7 +370,6 @@ void LUMINAEditor::resized()
 
         panelBounds.removeFromTop(15);
 
-        // --- Normal Mode Layout (Overlapped) ---
         auto normArea = panelBounds;
         auto tameArea = normArea.removeFromTop(20);
         bandTameLabel[b].setBounds(tameArea.removeFromLeft(40));
@@ -427,7 +399,6 @@ void LUMINAEditor::resized()
         bandWidthLabel[b].setBounds(widthArea.removeFromLeft(40));
         bandWidth[b].setBounds(widthArea);
 
-        // --- Pro Mode Layout (Overlapped) 3x3 Grid ---
         auto proArea = panelBounds;
         int proKnobH = 75;
         int proW3 = proArea.getWidth() / 3;
@@ -471,12 +442,31 @@ void LUMINAEditor::timerCallback()
 {
     updateAutoBandUI();
 
-    float matchGain = processor.analyzerCore.getMatchingGain();
-    float matchDB = juce::Decibels::gainToDecibels(matchGain);
-    juce::String sign = (matchDB >= 0.0f && matchDB > 0.05f) ? "+" : "";
-    autoLevelValueLabel.setText("Diff: " + sign + juce::String(matchDB, 1) + " dB", juce::dontSendNotification);
-
     bool isAutoLevelOn = processor.apvts.getRawParameterValue("AUTO_LEVEL")->load() > 0.5f;
+
+    float internalGain = processor.analyzerCore.getMatchingGain();
+    float internalDB = juce::Decibels::gainToDecibels(internalGain);
+    float currentOutDB = processor.apvts.getRawParameterValue("MASTER_OUT")->load();
+    float rawDiff = internalDB - currentOutDB;
+
+    if (isAutoLevelOn) {
+        if (!wasAutoLevelActive) {
+            displayDiffDB = rawDiff;
+            wasAutoLevelActive = true;
+        }
+        float alTimeSetting = processor.apvts.getRawParameterValue("AUTO_LEVEL_TIME_PRO")->load();
+        float timeSec = (alTimeSetting == 0.0f) ? 3.0f : (alTimeSetting == 1.0f ? 10.0f : (alTimeSetting == 2.0f ? 30.0f : 300.0f));
+        float alpha = 1.0f - std::exp(-1.0f / (timeSec * 30.0f));
+
+        displayDiffDB = displayDiffDB * (1.0f - alpha) + rawDiff * alpha;
+    }
+    else {
+        wasAutoLevelActive = false;
+        displayDiffDB = 0.0f;
+    }
+
+    juce::String sign = (displayDiffDB >= 0.0f && displayDiffDB > 0.05f) ? "+" : "";
+    autoLevelValueLabel.setText("Diff: " + sign + juce::String(displayDiffDB, 1) + " dB", juce::dontSendNotification);
     autoLevelCommitBtn.setEnabled(isAutoLevelOn);
 
     float c1 = processor.apvts.getRawParameterValue("CROSS_1")->load();
@@ -499,11 +489,12 @@ void LUMINAEditor::timerCallback()
     bool isPro = processor.apvts.getRawParameterValue("PRO_MODE")->load() > 0.5f;
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
 
-    // ⚡ Global Pro Visibility
     oversamplingCombo.setVisible(isPro); oversamplingLabel.setVisible(isPro);
     lookaheadSlider.setVisible(isPro); lookaheadLabel.setVisible(isPro);
     widthCross1Slider.setVisible(isPro); widthCross1Label.setVisible(isPro);
     widthCross2Slider.setVisible(isPro); widthCross2Label.setVisible(isPro);
+
+    autoLevelTimeCombo.setVisible(true);
 
     for (int b = 0; b < 3; ++b) {
         bool isBypass = processor.apvts.getRawParameterValue(prefixes[b] + "BYPASS")->load() > 0.5f;

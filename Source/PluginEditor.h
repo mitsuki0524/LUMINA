@@ -36,7 +36,6 @@ private:
     SpectrumAnalyzer spectrumAnalyzer;
     GRMeter grMeter;
 
-    // --- Global Controls ---
     juce::ToggleButton msModeButton;
     juce::ToggleButton autoLevelButton;
 
@@ -47,10 +46,8 @@ private:
     juce::TextButton autoBandButton;
     juce::ProgressBar autoBandProgress;
 
-    // ⚡ Pro Mode Controls (Global)
     juce::ToggleButton proModeButton;
-
-    juce::ComboBox autoLevelTimeCombo; // ラベルを削除しコンボのみに
+    juce::ComboBox autoLevelTimeCombo;
 
     juce::ComboBox oversamplingCombo;
     juce::Label oversamplingLabel;
@@ -64,7 +61,6 @@ private:
     juce::Slider widthCross2Slider;
     juce::Label widthCross2Label;
 
-    // --- Master Section ---
     juce::Label masterTitle;
     juce::Slider masterInSlider;
     juce::Label masterInLabel;
@@ -73,17 +69,16 @@ private:
     juce::Slider masterDryWetSlider;
     juce::Label masterDryWetLabel;
 
-    // --- Band UI Components ---
     juce::Label bandTitles[3];
     juce::TextButton tabMid[3];
     juce::TextButton tabSide[3];
     juce::ToggleButton bandLink[3];
 
+    // ⚡ Soloボタンを安全かつ堅牢な初期化にするための変数を保持
     juce::ToggleButton bandBypass[3];
     juce::ToggleButton bandSolo[3];
     juce::ToggleButton bandDelta[3];
 
-    // ⚡ 砂時計用スライダー (TameはM/Sで分離)
     juce::Slider bandTameM[3];
     juce::Slider bandTameS[3];
     juce::Label bandTameLabel[3];
@@ -95,7 +90,6 @@ private:
     juce::Slider bandSlidersS[3][4];
     juce::Label bandLabelsS[3][4];
 
-    // ⚡ Pro Mode Controls (Per Band 3x3 Grid)
     juce::Slider proTameSharp[3];  juce::Label proTameSharpLabel[3];
     juce::Slider proTameSpeed[3];  juce::Label proTameSpeedLabel[3];
     juce::Slider proAttackM[3];    juce::Label proAttackMLabel[3];
@@ -106,7 +100,6 @@ private:
     juce::Slider proHpssRes[3];    juce::Label proHpssResLabel[3];
     juce::Slider proLinkAmt[3];    juce::Label proLinkAmtLabel[3];
 
-    // --- APVTS Attachments ---
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
@@ -152,6 +145,9 @@ private:
     AnalysisFrame latestFrame{};
     bool currentTabIsSide[3] = { false, false, false };
     double progressValue = 0.0;
+
+    float displayDiffDB = 0.0f;
+    bool wasAutoLevelActive = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUMINAEditor)
 };

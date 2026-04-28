@@ -20,7 +20,7 @@
 #include "GUI/AnalysisFifo.h"
 
 struct BandParams {
-    float tameM; // ⚡ TameをM/Sで分離
+    float tameM;
     float tameS;
     float width;
     float threshold;
@@ -28,7 +28,7 @@ struct BandParams {
     float tonalShift;
     float transShift;
 
-    float attack;  // ⚡ アタック/リリース適用用
+    float attack;
     float release;
 
     bool isBypass;
@@ -181,7 +181,6 @@ private:
     juce::AudioBuffer<float> dryDelayBuffer;
     int delayWritePosition = 0;
 
-    // ⚡ Attack/Release 適用用のゲインエンベロープ状態 [ch][barkIdx]
     std::array<std::array<float, 24>, 2> dynEnvelopes{};
 
     std::vector<int> binToBarkMap;
@@ -195,7 +194,7 @@ private:
         std::atomic<float>* lookahead = nullptr;
         std::atomic<float>* widthCross1 = nullptr;
         std::atomic<float>* widthCross2 = nullptr;
-        std::atomic<float>* autoLevelTimePro = nullptr; // ⚡ A.LevelTime用
+        std::atomic<float>* autoLevelTimePro = nullptr;
 
         std::atomic<float>* cross1 = nullptr;
         std::atomic<float>* cross2 = nullptr;
@@ -210,7 +209,7 @@ private:
 
         struct Band {
             std::atomic<float>* tame = nullptr;
-            std::atomic<float>* tameS = nullptr; // ⚡ Tame Side
+            std::atomic<float>* tameS = nullptr;
             std::atomic<float>* width = nullptr;
             std::atomic<float>* threshM = nullptr;
             std::atomic<float>* depthM = nullptr;
