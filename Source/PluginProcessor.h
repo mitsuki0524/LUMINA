@@ -20,12 +20,17 @@
 #include "GUI/AnalysisFifo.h"
 
 struct BandParams {
-    float tame;
+    float tameM; // ⚡ TameをM/Sで分離
+    float tameS;
     float width;
     float threshold;
     float depth;
     float tonalShift;
     float transShift;
+
+    float attack;  // ⚡ アタック/リリース適用用
+    float release;
+
     bool isBypass;
     bool isSolo;
     bool isDelta;
@@ -64,7 +69,6 @@ public:
         }
     }
 
-    // ⚡ 追加: Widthエンジンの独立したクロスオーバー設定用
     void setCutoffs(float lowFreq, float highFreq)
     {
         lp1.setCutoffFrequency(lowFreq); hp1.setCutoffFrequency(lowFreq);
@@ -177,18 +181,21 @@ private:
     juce::AudioBuffer<float> dryDelayBuffer;
     int delayWritePosition = 0;
 
+    // ⚡ Attack/Release 適用用のゲインエンベロープ状態 [ch][barkIdx]
+    std::array<std::array<float, 24>, 2> dynEnvelopes{};
+
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;
     int mFftSize = 4096;
 
-    // ⚡ 拡張: Proモード用のキャッシュ変数を追加
     struct ParamCache {
         std::atomic<float>* proMode = nullptr;
         std::atomic<float>* oversampling = nullptr;
         std::atomic<float>* lookahead = nullptr;
         std::atomic<float>* widthCross1 = nullptr;
         std::atomic<float>* widthCross2 = nullptr;
+        std::atomic<float>* autoLevelTimePro = nullptr; // ⚡ A.LevelTime用
 
         std::atomic<float>* cross1 = nullptr;
         std::atomic<float>* cross2 = nullptr;
@@ -203,6 +210,7 @@ private:
 
         struct Band {
             std::atomic<float>* tame = nullptr;
+            std::atomic<float>* tameS = nullptr; // ⚡ Tame Side
             std::atomic<float>* width = nullptr;
             std::atomic<float>* threshM = nullptr;
             std::atomic<float>* depthM = nullptr;
@@ -217,7 +225,6 @@ private:
             std::atomic<float>* delta = nullptr;
             std::atomic<float>* link = nullptr;
 
-            // --- Pro Mode Per-Band ---
             std::atomic<float>* tameSharp = nullptr;
             std::atomic<float>* tameSpeed = nullptr;
             std::atomic<float>* attackM = nullptr;

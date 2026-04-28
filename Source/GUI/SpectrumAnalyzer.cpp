@@ -14,7 +14,14 @@ SpectrumAnalyzer::~SpectrumAnalyzer() {}
 
 void SpectrumAnalyzer::updateFrame(const AnalysisFrame& frame)
 {
-    currentFrame = frame;
+    // ⚡ 波形描画のスピード調整 (時間的フォールオフ)。値が小さいほど滑らかでゆっくりに。
+    float alpha = 0.25f;
+
+    for (size_t i = 0; i < 512; ++i) {
+        currentFrame.unprocessedSpectrum[i] = currentFrame.unprocessedSpectrum[i] * (1.0f - alpha) + frame.unprocessedSpectrum[i] * alpha;
+        currentFrame.magnitudeSpectrum[i] = currentFrame.magnitudeSpectrum[i] * (1.0f - alpha) + frame.magnitudeSpectrum[i] * alpha;
+        currentFrame.tameSpectrum[i] = currentFrame.tameSpectrum[i] * (1.0f - alpha) + frame.tameSpectrum[i] * alpha;
+    }
 }
 
 void SpectrumAnalyzer::setCrossovers(float c1, float c2)
@@ -101,7 +108,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     auto bounds = getLocalBounds().toFloat();
     g.fillAll(juce::Colour::fromString("FF1A1A1A"));
 
-    // --- グリッド線描画 ---
     g.setColour(juce::Colours::white.withAlpha(0.1f));
     const float freqs[] = { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f };
     for (float f : freqs) {
@@ -111,7 +117,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         g.drawText(label, static_cast<int>(x) + 2, static_cast<int>(bounds.getHeight()) - 15, 30, 15, juce::Justification::bottomLeft);
     }
 
-    // --- クロスオーバー線描画 ---
     float x1 = getXFromFreq(cross1, bounds.getWidth());
     float x2 = getXFromFreq(cross2, bounds.getWidth());
     g.setColour(draggingCrossIndex == 0 ? juce::Colours::white : juce::Colours::white.withAlpha(0.3f));
@@ -119,16 +124,21 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.setColour(draggingCrossIndex == 1 ? juce::Colours::white : juce::Colours::white.withAlpha(0.3f));
     g.drawVerticalLine(static_cast<int>(x2), 0.0f, bounds.getHeight());
 
-    // ⚡ スケールの上限を実用的な +12dB
-    const float minDB = -80.0f;
-    const float maxDB = 12.0f;
+    // ⚡ 復活: ドラッグ中の周波数をテキスト表示
+    if (isDragging) {
+        g.setColour(juce::Colours::white);
+        float drawX = (draggingCrossIndex == 0) ? x1 : x2;
+        juce::String freqStr = juce::String(currentDragFreq, 0) + " Hz";
+        g.drawText(freqStr, static_cast<int>(drawX) + 5, 10, 80, 20, juce::Justification::topLeft);
+    }
 
-    // ⚡ 基本カラー設定
+    const float minDB = -80.0f;
+    const float maxDB = 18.0f;
+
     juce::Colour colourLow = juce::Colour::fromString("FFFF8C00");
     juce::Colour colourMid = juce::Colour::fromString("FF764DFF");
     juce::Colour colourHigh = juce::Colour::fromString("FF00E5FF");
 
-    // ⚡ Tame描画用の「薄く明るい発光色」を作成
     juce::Colour tameLow = colourLow.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
     juce::Colour tameMid = colourMid.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
     juce::Colour tameHigh = colourHigh.withMultipliedBrightness(1.5f).withMultipliedSaturation(0.6f);
@@ -136,7 +146,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     float normX1 = juce::jlimit(0.0f, 1.0f, x1 / bounds.getWidth());
     float normX2 = juce::jlimit(0.0f, 1.0f, x2 / bounds.getWidth());
 
-    // メイン波形用グラデーション
     juce::ColourGradient bandGradient;
     bandGradient.point1 = { 0.0f, 0.0f };
     bandGradient.point2 = { bounds.getWidth(), 0.0f };
@@ -145,7 +154,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     if (normX2 > 0.0f) { bandGradient.addColour(normX2, colourMid); bandGradient.addColour(normX2 + 0.001f, colourHigh); }
     bandGradient.addColour(1.0f, colourHigh);
 
-    // Tame波形用グラデーション
     juce::ColourGradient tameGradient;
     tameGradient.point1 = { 0.0f, 0.0f };
     tameGradient.point2 = { bounds.getWidth(), 0.0f };
@@ -154,7 +162,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     if (normX2 > 0.0f) { tameGradient.addColour(normX2, tameMid); tameGradient.addColour(normX2 + 0.001f, tameHigh); }
     tameGradient.addColour(1.0f, tameHigh);
 
-    // ⚡ 波形のスムージング（滑らかな曲線にするための移動平均処理）
     std::array<float, 512> smoothedPre = currentFrame.unprocessedSpectrum;
     std::array<float, 512> smoothedPost = currentFrame.magnitudeSpectrum;
     std::array<float, 512> smoothedTame = currentFrame.tameSpectrum;
@@ -170,7 +177,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         }
     }
 
-    // 1. 原音波形(Pre)の描画 (背景)
     juce::Path prePath;
     bool preStarted = false;
     for (size_t i = 0; i < 512; ++i) {
@@ -180,7 +186,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
             float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
-
             if (!preStarted) { prePath.startNewSubPath(x, bounds.getHeight()); prePath.lineTo(x, y); preStarted = true; }
             else { prePath.lineTo(x, y); }
         }
@@ -191,22 +196,17 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         g.fillPath(prePath);
     }
 
-    // 2. Tameの滑らかで美しいハイライト描画
     juce::Path tamePath;
     bool hasTame = false;
-
     for (size_t i = 0; i < 512; ++i) {
         if (smoothedTame[i] < 0.99f) hasTame = true;
-
         float dbTop = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(smoothedPre[i], minDB));
         float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
         float x = getXFromFreq(freq, bounds.getWidth());
         float yTop = juce::jmap(dbTop, minDB, maxDB, bounds.getHeight(), 0.0f);
-
         if (i == 0) tamePath.startNewSubPath(x, yTop);
         else tamePath.lineTo(x, yTop);
     }
-
     if (hasTame) {
         for (int i = 511; i >= 0; --i) {
             float magBot = smoothedPre[i] * smoothedTame[i];
@@ -214,18 +214,14 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
             float yBot = juce::jmap(dbBot, minDB, maxDB, bounds.getHeight(), 0.0f);
-
             tamePath.lineTo(x, yBot);
         }
         tamePath.closeSubPath();
-
-        // 各帯域の明るい(薄い)色で削られた領域を表現
         g.setGradientFill(tameGradient);
         g.setOpacity(0.85f);
         g.fillPath(tamePath);
     }
 
-    // 3. 最終処理後(Post)波形の描画
     juce::Path postPath;
     bool postStarted = false;
     for (size_t i = 0; i < 512; ++i) {
@@ -235,18 +231,15 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
             float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
-
             if (!postStarted) { postPath.startNewSubPath(x, bounds.getHeight()); postPath.lineTo(x, y); postStarted = true; }
             else { postPath.lineTo(x, y); }
         }
     }
     if (postStarted) {
         postPath.lineTo(bounds.getWidth(), bounds.getHeight()); postPath.closeSubPath();
-
         g.setGradientFill(bandGradient);
         g.setOpacity(0.5f);
         g.fillPath(postPath);
-
         g.setOpacity(1.0f);
         g.strokePath(postPath, juce::PathStrokeType(1.5f));
     }

@@ -10,11 +10,12 @@
 struct AnalysisFrame {
     bool isOnset = false;
     std::array<float, 24> barkPower{};
-    std::array<float, 24> barkGainReduction{};
+    std::array<float, 24> barkGainReductionM{}; // ⚡ Mid用
+    std::array<float, 24> barkGainReductionS{}; // ⚡ Side用
 
-    std::array<float, 512> unprocessedSpectrum{}; // 原音(Pre)の波形用
-    std::array<float, 512> magnitudeSpectrum{};   // 処理後(Post)の波形用
-    std::array<float, 512> tameSpectrum{};        // Tameの削減量描画用
+    std::array<float, 512> unprocessedSpectrum{};
+    std::array<float, 512> magnitudeSpectrum{};
+    std::array<float, 512> tameSpectrum{};
 
     int activeSoloBand = -1;
 };

@@ -20,7 +20,8 @@ public:
     void paint(juce::Graphics& g) override;
 
 private:
-    std::array<float, 24> displayedGR; // メーターの滑らかなアニメーション用
+    std::array<float, 24> displayedGR_M;
+    std::array<float, 24> displayedGR_S;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GRMeter)
 };

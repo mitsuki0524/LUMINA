@@ -50,6 +50,8 @@ private:
     // ⚡ Pro Mode Controls (Global)
     juce::ToggleButton proModeButton;
 
+    juce::ComboBox autoLevelTimeCombo; // ラベルを削除しコンボのみに
+
     juce::ComboBox oversamplingCombo;
     juce::Label oversamplingLabel;
 
@@ -81,7 +83,9 @@ private:
     juce::ToggleButton bandSolo[3];
     juce::ToggleButton bandDelta[3];
 
-    juce::Slider bandTame[3];
+    // ⚡ 砂時計用スライダー (TameはM/Sで分離)
+    juce::Slider bandTameM[3];
+    juce::Slider bandTameS[3];
     juce::Label bandTameLabel[3];
     juce::Slider bandWidth[3];
     juce::Label bandWidthLabel[3];
@@ -113,6 +117,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> autoBandTimeAttachment;
 
     std::unique_ptr<ButtonAttachment> proModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> autoLevelTimeAttachment;
     std::unique_ptr<ComboBoxAttachment> oversamplingAttachment;
     std::unique_ptr<SliderAttachment> lookaheadAttachment;
     std::unique_ptr<SliderAttachment> widthCross1Attachment;
@@ -122,7 +127,8 @@ private:
     std::unique_ptr<SliderAttachment> masterOutAttachment;
     std::unique_ptr<SliderAttachment> masterDryWetAttachment;
 
-    std::unique_ptr<SliderAttachment> bandTameAttachments[3];
+    std::unique_ptr<SliderAttachment> bandTameMAttachments[3];
+    std::unique_ptr<SliderAttachment> bandTameSAttachments[3];
     std::unique_ptr<SliderAttachment> bandWidthAttachments[3];
 
     std::unique_ptr<SliderAttachment> bandAttachmentsM[3][4];
@@ -133,7 +139,6 @@ private:
     std::unique_ptr<ButtonAttachment> bandDeltaAttachments[3];
     std::unique_ptr<ButtonAttachment> bandLinkAttachments[3];
 
-    // ⚡ Pro Mode Per-Band Attachments
     std::unique_ptr<SliderAttachment> proTameSharpAtt[3];
     std::unique_ptr<SliderAttachment> proTameSpeedAtt[3];
     std::unique_ptr<SliderAttachment> proAttackMAtt[3];

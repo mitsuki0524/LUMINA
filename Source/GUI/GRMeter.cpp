@@ -2,28 +2,30 @@
 // Source/GUI/GRMeter.cpp
 // ==========================================
 #include "GRMeter.h"
-#include <juce_audio_basics/juce_audio_basics.h> // ⚡ 追加: juce::Decibels を使用するために必須
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
 
 GRMeter::GRMeter()
 {
-    // 初期状態は1.0 (ゲインリダクション 0dB)
-    displayedGR.fill(1.0f);
+    displayedGR_M.fill(1.0f);
+    displayedGR_S.fill(1.0f);
 }
 
 GRMeter::~GRMeter() {}
 
 void GRMeter::updateFrame(const AnalysisFrame& frame)
 {
-    // メーターの滑らかなアニメーション（アタック速め、リリース遅め）
+    float alphaAttack = 0.3f;
+    float alphaRelease = 0.1f;
+
     for (size_t i = 0; i < 24; ++i) {
-        float target = frame.barkGainReduction[i];
-        if (target < displayedGR[i]) {
-            displayedGR[i] = target; // アタック（即座に反応）
-        }
-        else {
-            displayedGR[i] = displayedGR[i] * 0.85f + target * 0.15f; // リリース（滑らかに戻る）
-        }
+        float targetM = frame.barkGainReductionM[i];
+        if (targetM < displayedGR_M[i]) displayedGR_M[i] = displayedGR_M[i] * (1.0f - alphaAttack) + targetM * alphaAttack;
+        else displayedGR_M[i] = displayedGR_M[i] * (1.0f - alphaRelease) + targetM * alphaRelease;
+
+        float targetS = frame.barkGainReductionS[i];
+        if (targetS < displayedGR_S[i]) displayedGR_S[i] = displayedGR_S[i] * (1.0f - alphaAttack) + targetS * alphaAttack;
+        else displayedGR_S[i] = displayedGR_S[i] * (1.0f - alphaRelease) + targetS * alphaRelease;
     }
     repaint();
 }
@@ -31,31 +33,37 @@ void GRMeter::updateFrame(const AnalysisFrame& frame)
 void GRMeter::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    float barWidth = bounds.getWidth() / 24.0f;
-
-    // アナライザーの上部から最大60ピクセル分下がるように設定
+    float blockWidth = bounds.getWidth() / 24.0f;
     const float maxGrHeight = 60.0f;
 
     for (int i = 0; i < 24; ++i) {
-        // リニアゲインをdBに変換
-        float grDb = juce::Decibels::gainToDecibels(displayedGR[i]);
-        if (grDb > 0.0f) grDb = 0.0f; // 安全のためのクランプ
+        float grDbM = juce::Decibels::gainToDecibels(displayedGR_M[i]);
+        if (grDbM > 0.0f) grDbM = 0.0f;
+        float hM = juce::jlimit(0.0f, maxGrHeight, juce::jmap(grDbM, -18.0f, 0.0f, maxGrHeight, 0.0f));
 
-        // -18dB を最大の振り幅として高さをマッピング
-        float mappedHeight = juce::jmap(grDb, -18.0f, 0.0f, maxGrHeight, 0.0f);
-        mappedHeight = juce::jlimit(0.0f, maxGrHeight, mappedHeight);
+        float grDbS = juce::Decibels::gainToDecibels(displayedGR_S[i]);
+        if (grDbS > 0.0f) grDbS = 0.0f;
+        float hS = juce::jlimit(0.0f, maxGrHeight, juce::jmap(grDbS, -18.0f, 0.0f, maxGrHeight, 0.0f));
 
-        // わずかでも削られていれば描画
-        if (mappedHeight > 1.0f) {
-            juce::Rectangle<float> bar(i * barWidth + 1.0f, 0.0f, barWidth - 2.0f, mappedHeight);
+        float x = i * blockWidth;
+        float halfW = blockWidth * 0.5f;
 
-            // Ableton風のオレンジ色（半透明）
-            g.setColour(juce::Colour::fromString("99FF764D"));
-            g.fillRect(bar);
+        // ⚡ 左半分: Mid (オレンジ)
+        if (hM > 1.0f) {
+            juce::Rectangle<float> barM(x + 1.0f, 0.0f, halfW - 1.0f, hM);
+            g.setColour(juce::Colour::fromString("B3FF8C00"));
+            g.fillRect(barM);
+            g.setColour(juce::Colour::fromString("FFFF8C00"));
+            g.fillRect(barM.getX(), barM.getBottom() - 2.0f, barM.getWidth(), 2.0f);
+        }
 
-            // バーの一番下にソリッドなラインを描画して視認性を高める
-            g.setColour(juce::Colour::fromString("FFFF764D"));
-            g.fillRect(bar.getX(), bar.getBottom() - 2.0f, bar.getWidth(), 2.0f);
+        // ⚡ 右半分: Side (シアン)
+        if (hS > 1.0f) {
+            juce::Rectangle<float> barS(x + halfW, 0.0f, halfW - 1.0f, hS);
+            g.setColour(juce::Colour::fromString("B300E5FF"));
+            g.fillRect(barS);
+            g.setColour(juce::Colour::fromString("FF00E5FF"));
+            g.fillRect(barS.getX(), barS.getBottom() - 2.0f, barS.getWidth(), 2.0f);
         }
     }
 }

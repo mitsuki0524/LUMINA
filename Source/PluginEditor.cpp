@@ -50,6 +50,12 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
     addAndMakeVisible(proModeButton);
     proModeAttachment = std::make_unique<ButtonAttachment>(processor.apvts, "PRO_MODE", proModeButton);
 
+    // ⚡ A.LevelTime (ラベルを削除し、コンボボックスのみに)
+    autoLevelTimeCombo.addItemList({ "Short (3s)", "Mid (10s)", "Long (30s)", "Integrated" }, 1);
+    autoLevelTimeCombo.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(autoLevelTimeCombo);
+    autoLevelTimeAttachment = std::make_unique<ComboBoxAttachment>(processor.apvts, "AUTO_LEVEL_TIME_PRO", autoLevelTimeCombo);
+
     autoBandTimeCombo.addItemList({ "3s", "10s", "30s" }, 1);
     autoBandTimeCombo.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(autoBandTimeCombo);
@@ -163,13 +169,19 @@ LUMINAEditor::LUMINAEditor(LUMINAProcessor& p)
         bandSoloAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "SOLO", bandSolo[b]);
         bandDeltaAttachments[b] = std::make_unique<ButtonAttachment>(processor.apvts, prefixes[b] + "DELTA", bandDelta[b]);
 
-        bandTame[b].setSliderStyle(juce::Slider::LinearHorizontal);
-        bandTame[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
-        addAndMakeVisible(bandTame[b]);
+        bandTameM[b].setSliderStyle(juce::Slider::LinearHorizontal);
+        bandTameM[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+        addChildComponent(bandTameM[b]);
+        bandTameMAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME", bandTameM[b]);
+
+        bandTameS[b].setSliderStyle(juce::Slider::LinearHorizontal);
+        bandTameS[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+        addChildComponent(bandTameS[b]);
+        bandTameSAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME_S", bandTameS[b]);
+
         bandTameLabel[b].setText("Tame", juce::dontSendNotification);
         bandTameLabel[b].setFont(13.0f);
         addAndMakeVisible(bandTameLabel[b]);
-        bandTameAttachments[b] = std::make_unique<SliderAttachment>(processor.apvts, prefixes[b] + "TAME", bandTame[b]);
 
         bandWidth[b].setSliderStyle(juce::Slider::LinearHorizontal);
         bandWidth[b].setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
@@ -242,6 +254,9 @@ void LUMINAEditor::setBandTab(int bandIndex, bool showSide)
         bandSlidersS[bandIndex][p].setVisible(!isPro && showSide);
         bandLabelsS[bandIndex][p].setVisible(!isPro && showSide);
     }
+
+    bandTameM[bandIndex].setVisible(!isPro && !showSide);
+    bandTameS[bandIndex].setVisible(!isPro && showSide);
 
     proAttackM[bandIndex].setVisible(isPro && !showSide);
     proAttackMLabel[bandIndex].setVisible(isPro && !showSide);
@@ -317,7 +332,6 @@ void LUMINAEditor::resized()
     masterDryWetLabel.setBounds(masterArea.removeFromTop(20));
     masterDryWetSlider.setBounds(masterArea.removeFromTop(75));
 
-    // ⚡ Global Pro Settings (Master Section)
     masterArea.removeFromTop(10);
     oversamplingLabel.setBounds(masterArea.removeFromTop(15));
     oversamplingCombo.setBounds(masterArea.removeFromTop(24));
@@ -325,23 +339,37 @@ void LUMINAEditor::resized()
     lookaheadLabel.setBounds(masterArea.removeFromTop(15));
     lookaheadSlider.setBounds(masterArea.removeFromTop(60));
 
+    // ⚡ Global Row (Top bar) - ご指示いただいた完璧な並び順に再計算
     auto globalRow = mainArea.removeFromTop(40);
-    msModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
-    globalRow.removeFromLeft(10);
 
+    // 1. M/S Mode
+    msModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
+
+    // 2. Auto Level
     autoLevelButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 30));
-    autoLevelValueLabel.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 20));
+
+    // 3. A.Level Time Combo (名称なしで隣接)
+    autoLevelTimeCombo.setBounds(globalRow.removeFromLeft(95).withSizeKeepingCentre(85, 24));
+
+    // 4. Diff Label
+    autoLevelValueLabel.setBounds(globalRow.removeFromLeft(65).withSizeKeepingCentre(60, 20));
+
+    // 5. Commit
     autoLevelCommitBtn.setBounds(globalRow.removeFromLeft(70).withSizeKeepingCentre(60, 24));
 
-    // ⚡ Pro Mode Button Layout
-    proModeButton.setBounds(globalRow.removeFromLeft(90).withSizeKeepingCentre(80, 24));
+    // 6. Professional
+    proModeButton.setBounds(globalRow.removeFromLeft(95).withSizeKeepingCentre(85, 24));
 
-    auto bandBtnArea = globalRow.removeFromRight(90);
-    autoBandButton.setBounds(bandBtnArea.withSizeKeepingCentre(80, 30));
-    globalRow.removeFromRight(10);
+    // --- Right Aligned (右端から配置) ---
+    // 9. Auto Band
+    autoBandButton.setBounds(globalRow.removeFromRight(90).withSizeKeepingCentre(80, 30));
+
+    // 8. Ready (Progress Bar)
     autoBandProgress.setBounds(globalRow.removeFromRight(150).withSizeKeepingCentre(140, 20));
-    globalRow.removeFromRight(10);
-    autoBandTimeCombo.setBounds(globalRow.removeFromRight(60).withSizeKeepingCentre(60, 24));
+
+    // 7. Auto Band Time Combo
+    autoBandTimeCombo.setBounds(globalRow.removeFromRight(70).withSizeKeepingCentre(60, 24));
+
 
     mainArea.removeFromTop(10);
     int panelWidth = mainArea.getWidth() / 3;
@@ -373,7 +401,8 @@ void LUMINAEditor::resized()
         auto normArea = panelBounds;
         auto tameArea = normArea.removeFromTop(20);
         bandTameLabel[b].setBounds(tameArea.removeFromLeft(40));
-        bandTame[b].setBounds(tameArea);
+        bandTameM[b].setBounds(tameArea);
+        bandTameS[b].setBounds(tameArea);
         normArea.removeFromTop(15);
 
         auto topKnobRow = normArea.removeFromTop(75);
@@ -398,7 +427,7 @@ void LUMINAEditor::resized()
         bandWidthLabel[b].setBounds(widthArea.removeFromLeft(40));
         bandWidth[b].setBounds(widthArea);
 
-        // ⚡ --- Pro Mode Layout (Overlapped) 3x3 Grid ---
+        // --- Pro Mode Layout (Overlapped) 3x3 Grid ---
         auto proArea = panelBounds;
         int proKnobH = 75;
         int proW3 = proArea.getWidth() / 3;
@@ -471,10 +500,8 @@ void LUMINAEditor::timerCallback()
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
 
     // ⚡ Global Pro Visibility
-    oversamplingCombo.setVisible(isPro);
-    oversamplingLabel.setVisible(isPro);
-    lookaheadSlider.setVisible(isPro);
-    lookaheadLabel.setVisible(isPro);
+    oversamplingCombo.setVisible(isPro); oversamplingLabel.setVisible(isPro);
+    lookaheadSlider.setVisible(isPro); lookaheadLabel.setVisible(isPro);
     widthCross1Slider.setVisible(isPro); widthCross1Label.setVisible(isPro);
     widthCross2Slider.setVisible(isPro); widthCross2Label.setVisible(isPro);
 
@@ -482,7 +509,8 @@ void LUMINAEditor::timerCallback()
         bool isBypass = processor.apvts.getRawParameterValue(prefixes[b] + "BYPASS")->load() > 0.5f;
         float alpha = isBypass ? 0.25f : 1.0f;
 
-        bandTame[b].setAlpha(alpha); bandTameLabel[b].setAlpha(alpha);
+        bandTameM[b].setAlpha(alpha); bandTameS[b].setAlpha(alpha);
+        bandTameLabel[b].setAlpha(alpha);
         bandWidth[b].setAlpha(alpha); bandWidthLabel[b].setAlpha(alpha);
         proTameSharp[b].setAlpha(alpha); proTameSharpLabel[b].setAlpha(alpha);
         proTameSpeed[b].setAlpha(alpha); proTameSpeedLabel[b].setAlpha(alpha);
@@ -490,8 +518,10 @@ void LUMINAEditor::timerCallback()
         proHpssRes[b].setAlpha(alpha);   proHpssResLabel[b].setAlpha(alpha);
         proLinkAmt[b].setAlpha(alpha);   proLinkAmtLabel[b].setAlpha(alpha);
 
-        // Visibility Toggles between Normal and Pro Mode
-        bandTame[b].setVisible(!isPro); bandTameLabel[b].setVisible(!isPro);
+        bandTameM[b].setVisible(!isPro && !currentTabIsSide[b]);
+        bandTameS[b].setVisible(!isPro && currentTabIsSide[b]);
+        bandTameLabel[b].setVisible(!isPro);
+
         bandWidth[b].setVisible(!isPro); bandWidthLabel[b].setVisible(!isPro);
         proTameSharp[b].setVisible(isPro); proTameSharpLabel[b].setVisible(isPro);
         proTameSpeed[b].setVisible(isPro); proTameSpeedLabel[b].setVisible(isPro);
