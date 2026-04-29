@@ -10,6 +10,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
+#include <array>
 #include "AnalysisFifo.h"
 
 class SpectrumAnalyzer : public juce::Component
@@ -34,6 +35,9 @@ private:
     juce::AudioProcessorValueTreeState& apvts;
     AnalysisFrame currentFrame;
 
+    // ⚡ 追加: マスキング閾値の平滑化バッファ
+    std::array<float, 24> currentMaskingThreshold{};
+
     float cross1 = 250.0f;
     float cross2 = 4000.0f;
 
@@ -48,4 +52,5 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer)
 };
+
 #endif // LUMINA_SPECTRUMANALYZER_H

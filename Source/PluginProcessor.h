@@ -70,11 +70,18 @@ private:
     std::array<AllPassStage, maxStages> stages;
 };
 
-// ⚡ 位相補償付き 3バンド Linkwitz-Riley M/S 幅操作エンジン (サブトラクション完全再構成版)
+// ⚡ 位相補償付き 3バンド Linkwitz-Riley M/S 幅操作エンジン (Orfanidis完全再構成版)
 class StereoWidthEngine
 {
 public:
     StereoWidthEngine() {}
+
+    struct OrfanidisLR4 {
+        juce::dsp::IIR::Filter<float> stage1, stage2;
+        void prepare(const juce::dsp::ProcessSpec& spec) { stage1.prepare(spec); stage2.prepare(spec); }
+        void reset() { stage1.reset(); stage2.reset(); }
+        float processSample(float x) { return stage2.processSample(stage1.processSample(x)); }
+    };
 
     void prepare(double sampleRate, int samplesPerBlock)
     {
@@ -86,37 +93,10 @@ public:
         s_lp1.prepare(spec); s_lp2.prepare(spec);
         s_ap1.prepare(spec); s_ap2_rest.prepare(spec); s_ap2_low.prepare(spec);
 
-        auto setTypes = [](juce::dsp::LinkwitzRileyFilter<float>& lp1, juce::dsp::LinkwitzRileyFilter<float>& lp2,
-            juce::dsp::LinkwitzRileyFilter<float>& ap1, juce::dsp::LinkwitzRileyFilter<float>& ap2_rest,
-            juce::dsp::LinkwitzRileyFilter<float>& ap2_low)
-            {
-                lp1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
-                lp2.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
-                ap1.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-                ap2_rest.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-                ap2_low.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
-            };
-
-        setTypes(m_lp1, m_lp2, m_ap1, m_ap2_rest, m_ap2_low);
-        setTypes(s_lp1, s_lp2, s_ap1, s_ap2_rest, s_ap2_low);
-
         decorrelator.prepare(sampleRate);
     }
 
-    void setCutoffs(float lowFreq, float highFreq)
-    {
-        m_lp1.setCutoffFrequency(lowFreq);
-        m_ap1.setCutoffFrequency(lowFreq);
-        m_lp2.setCutoffFrequency(highFreq);
-        m_ap2_rest.setCutoffFrequency(highFreq);
-        m_ap2_low.setCutoffFrequency(highFreq);
-
-        s_lp1.setCutoffFrequency(lowFreq);
-        s_ap1.setCutoffFrequency(lowFreq);
-        s_lp2.setCutoffFrequency(highFreq);
-        s_ap2_rest.setCutoffFrequency(highFreq);
-        s_ap2_low.setCutoffFrequency(highFreq);
-    }
+    void setCutoffs(float lowFreq, float highFreq, double sampleRate);
 
     void processMS(juce::AudioBuffer<float>& msBuffer, float wLow, float wMid, float wHigh)
     {
@@ -126,22 +106,22 @@ public:
         for (int i = 0; i < msBuffer.getNumSamples(); ++i)
         {
             // --- Mid の分割と位相補償 ---
-            float m_low_pre = m_lp1.processSample(0, M[i]);
-            float m_ap1_out = m_ap1.processSample(0, M[i]);
+            float m_low_pre = m_lp1.processSample(M[i]);
+            float m_ap1_out = m_ap1.processSample(M[i]);
             float m_rest = m_ap1_out - m_low_pre;
-            float m_mi = m_lp2.processSample(0, m_rest);
-            float m_ap2_out = m_ap2_rest.processSample(0, m_rest);
+            float m_mi = m_lp2.processSample(m_rest);
+            float m_ap2_out = m_ap2_rest.processSample(m_rest);
             float m_hi = m_ap2_out - m_mi;
-            float m_lo = m_ap2_low.processSample(0, m_low_pre);
+            float m_lo = m_ap2_low.processSample(m_low_pre);
 
             // --- Side の分割と位相補償 ---
-            float s_low_pre = s_lp1.processSample(0, S[i]);
-            float s_ap1_out = s_ap1.processSample(0, S[i]);
+            float s_low_pre = s_lp1.processSample(S[i]);
+            float s_ap1_out = s_ap1.processSample(S[i]);
             float s_rest = s_ap1_out - s_low_pre;
-            float s_mi = s_lp2.processSample(0, s_rest);
-            float s_ap2_out = s_ap2_rest.processSample(0, s_rest);
+            float s_mi = s_lp2.processSample(s_rest);
+            float s_ap2_out = s_ap2_rest.processSample(s_rest);
             float s_hi = s_ap2_out - s_mi;
-            float s_lo = s_ap2_low.processSample(0, s_low_pre);
+            float s_lo = s_ap2_low.processSample(s_low_pre);
 
             // Width コントロール
             s_lo *= wLow;
@@ -165,8 +145,8 @@ public:
     }
 
 private:
-    juce::dsp::LinkwitzRileyFilter<float> m_lp1, m_lp2, m_ap1, m_ap2_rest, m_ap2_low;
-    juce::dsp::LinkwitzRileyFilter<float> s_lp1, s_lp2, s_ap1, s_ap2_rest, s_ap2_low;
+    OrfanidisLR4 m_lp1, m_lp2, m_ap1, m_ap2_rest, m_ap2_low;
+    OrfanidisLR4 s_lp1, s_lp2, s_ap1, s_ap2_rest, s_ap2_low;
     AllPassDecorrelator decorrelator;
 };
 
@@ -235,6 +215,9 @@ private:
     std::array<std::vector<float>, 2> wHighArrWorkspaces;
     std::array<std::vector<float>, 2> smoothAlphasWorkspaces;
     std::array<std::vector<float>, 2> envWorkspaces;
+
+    // ⚡ 追加: TPTフォロワー用の状態保持バッファ
+    std::array<std::vector<float>, 2> tptStates;
 
     juce::AudioBuffer<float> inputCopyBuffer;
     juce::AudioBuffer<float> dryDelayBuffer;

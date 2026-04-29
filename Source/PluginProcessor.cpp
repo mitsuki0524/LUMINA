@@ -4,6 +4,62 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// ⚡ Orfanidisスタイルの高精度Butterworth係数生成
+static juce::dsp::IIR::Coefficients<float>::Ptr makeOrfanidisButterworthLP(double sampleRate, float frequency)
+{
+    double omega0 = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+    double sn = std::sin(omega0);
+    double cs = std::cos(omega0);
+    double alpha = sn / (2.0 * 0.70710678118); // Q = 0.707
+
+    double a0 = 1.0 + alpha;
+    double a1 = -2.0 * cs;
+    double a2 = 1.0 - alpha;
+    double b0 = (1.0 - cs) / 2.0;
+    double b1 = 1.0 - cs;
+    double b2 = (1.0 - cs) / 2.0;
+
+    return new juce::dsp::IIR::Coefficients<float>(
+        static_cast<float>(b0), static_cast<float>(b1), static_cast<float>(b2),
+        static_cast<float>(a0), static_cast<float>(a1), static_cast<float>(a2));
+}
+
+static juce::dsp::IIR::Coefficients<float>::Ptr makeOrfanidisAllPass(double sampleRate, float frequency)
+{
+    double omega0 = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+    double sn = std::sin(omega0);
+    double cs = std::cos(omega0);
+    double alpha = sn / (2.0 * 0.70710678118);
+
+    double a0 = 1.0 + alpha;
+    double a1 = -2.0 * cs;
+    double a2 = 1.0 - alpha;
+
+    return new juce::dsp::IIR::Coefficients<float>(
+        static_cast<float>(a2), static_cast<float>(a1), static_cast<float>(a0),
+        static_cast<float>(a0), static_cast<float>(a1), static_cast<float>(a2));
+}
+
+// ⚡ StereoWidthEngineの実装実体
+void StereoWidthEngine::setCutoffs(float lowFreq, float highFreq, double sampleRate)
+{
+    auto lp1Coeffs = makeOrfanidisButterworthLP(sampleRate, lowFreq);
+    auto ap1Coeffs = makeOrfanidisAllPass(sampleRate, lowFreq);
+    auto lp2Coeffs = makeOrfanidisButterworthLP(sampleRate, highFreq);
+    auto ap2Coeffs = makeOrfanidisAllPass(sampleRate, highFreq);
+
+    auto applyCoeffs = [](OrfanidisLR4& target, juce::dsp::IIR::Coefficients<float>::Ptr c) {
+        *target.stage1.coefficients = *c;
+        *target.stage2.coefficients = *c;
+        };
+
+    applyCoeffs(m_lp1, lp1Coeffs); applyCoeffs(s_lp1, lp1Coeffs);
+    applyCoeffs(m_ap1, ap1Coeffs); applyCoeffs(s_ap1, ap1Coeffs);
+    applyCoeffs(m_lp2, lp2Coeffs); applyCoeffs(s_lp2, lp2Coeffs);
+    applyCoeffs(m_ap2_rest, ap2Coeffs); applyCoeffs(s_ap2_rest, ap2Coeffs);
+    applyCoeffs(m_ap2_low, ap2Coeffs); applyCoeffs(s_ap2_low, ap2Coeffs);
+}
+
 LUMINAProcessor::LUMINAProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
     : AudioProcessor(BusesProperties()
@@ -242,6 +298,7 @@ void LUMINAProcessor::handleAsyncUpdate()
         wHighArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         smoothAlphasWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         envWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        tptStates[ch].assign(static_cast<size_t>(numBins), 0.0f);
     }
 
     // 新しいレイテンシーの計算とDAWへの通知
@@ -330,6 +387,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         wHighArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         smoothAlphasWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
         envWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        tptStates[ch].assign(static_cast<size_t>(numBins), 0.0f);
 
         // ⚡ コールバックの登録 (processBlockから呼ばれる)
         spectralEngines[ch].setProcessingCallback([this, ch, numBins, hopSize](float* magnitudes, int nBins)
@@ -350,6 +408,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 float* wHighArr = wHighArrWorkspaces[ch].data();
                 float* smoothAlphas = smoothAlphasWorkspaces[ch].data();
                 float* env = envWorkspaces[ch].data();
+                float* tpt = tptStates[ch].data();
 
                 float normFactor = 2.0f / static_cast<float>(mFftSize);
 
@@ -460,12 +519,19 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         (cache.bands[2].tameSpeed->load() * wHigh);
                 }
 
-                env[0] = rawMags[0];
-                for (int i = 1; i < nBins; ++i) {
-                    env[i] = env[i - 1] * smoothAlphas[i] + rawMags[i] * (1.0f - smoothAlphas[i]);
+                // ⚡ [TPT 1次構造によるしなやかなエンベロープ追従]
+                for (int i = 0; i < nBins; ++i) {
+                    float g = 1.0f - smoothAlphas[i];
+                    float v = rawMags[i] - tpt[i];
+                    float y = v * (g / (1.0f + g)) + tpt[i];
+                    tpt[i] = y + (y - tpt[i]);
+                    env[i] = y;
                 }
                 for (int i = nBins - 2; i >= 0; --i) {
-                    env[i] = env[i + 1] * smoothAlphas[i] + env[i] * (1.0f - smoothAlphas[i]);
+                    float g = 1.0f - smoothAlphas[i];
+                    float x = env[i];
+                    float y = (env[i + 1] - x) * (g / (1.0f + g)) + x;
+                    env[i] = y;
                 }
 
                 std::array<float, 24> barkTargetGR;
@@ -521,6 +587,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[1].isDelta) totalGain1 = 1.0f - totalGain1;
                     if (bands[2].isDelta) totalGain2 = 1.0f - totalGain2;
 
+                    // ⚡ Soloロジックの完全復元
                     if (anySolo) {
                         if (!bands[0].isSolo) totalGain0 = 0.0f;
                         if (!bands[1].isSolo) totalGain1 = 0.0f;
@@ -551,18 +618,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     else dynEnvelopes[ch][bark] = current * relCoeff + target * (1.0f - relCoeff);
                 }
 
-                // ⚡ 修正: Side(1)ではなく、Mid(0)成分を画面に送る。
-                // これによりL+R（モノラル）入力時でも波形が確実に表示されます。
                 if (ch == 0) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
                     frame.barkPower = barkPower;
-                    frame.internalSampleRate = mSampleRate; // ⚡ 追加：現在の内部レートをセット
+                    frame.internalSampleRate = mSampleRate;
 
                     for (int i = 0; i < 24; ++i) {
                         frame.barkGainReductionM[i] = dynEnvelopes[0][i];
                         frame.barkGainReductionS[i] = dynEnvelopes[1][i];
+                        frame.barkMaskingThreshold[i] = juce::Decibels::decibelsToGain(maskThresh[i]); // ⚡ 追加
                     }
 
                     int soloBandIdx = -1;
@@ -578,10 +644,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int maxAudibleBin = static_cast<int>(targetFreqLimit / binFreq);
                     maxAudibleBin = juce::jlimit(uiBins, nBins, maxAudibleBin);
 
-                    // ⚡ 修正：OSによって binsPerUI が 0 になるのを防ぎ、精度を確保
                     const int binsPerUI = std::max(1, maxAudibleBin / uiBins);
-
-                    // ⚡ 修正：表示ゲインを 15.0f まで引き上げ（ドラム等のピークを8割にするため）
                     const float visualGain = 18.0f;
 
                     for (int i = 0; i < uiBins; ++i) {
@@ -593,14 +656,12 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         for (int j = 0; j < binsPerUI; ++j) {
                             int idx = startIdx + j;
                             if (idx < nBins) {
-                                // 振幅(magnitude)の平均をとる方式に変更して視認性を安定化
                                 sumPre += rawMags[idx];
                                 sumPost += rawMags[idx] * binGains[idx];
                                 if (binTameGains[idx] < minTame) minTame = binTameGains[idx];
                             }
                         }
 
-                        // ⚡ 修正：平均値を算出し、大幅に引き上げたゲインを適用
                         frame.unprocessedSpectrum[i] = (sumPre / (float)binsPerUI) * visualGain;
                         frame.magnitudeSpectrum[i] = (sumPost / (float)binsPerUI) * visualGain;
                         frame.tameSpectrum[i] = minTame;
@@ -651,7 +712,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    // ⚡ Rebuild保護: メッセージスレッドが再構築中であれば無音を出力しクラッシュを回避
     const juce::SpinLock::ScopedTryLockType lock(processLock);
     if (!lock.isLocked()) {
         buffer.clear();
@@ -692,8 +752,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     juce::AudioBuffer<float> processingBuffer(channelData, numChannels, osNumSamples);
 
-    // ⚡ 修正1: MSモードがONの時だけ、FFT処理のためにM/Sエンコードを行う
-    // これにより、通常のL/Rモード時にドラムのセンター定位が揺れるバグ（レゾナンス感）が消滅します。
     if (isMsMode && numChannels == 2) {
         msEncoder.encodeMidSide(processingBuffer);
     }
@@ -724,21 +782,18 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         spectralEngines[ch].process(data, data, osNumSamples);
     }
 
-    // ⚡ 修正2: FFT処理が終わったら、Width処理の前に一旦L/Rに戻す
     if (isMsMode && numChannels == 2) {
         msEncoder.decodeMidSide(processingBuffer);
     }
 
     float wLowFreq = cache.widthCross1->load();
     float wHighFreq = cache.widthCross2->load();
-    widthEngine.setCutoffs(wLowFreq, wHighFreq);
+    widthEngine.setCutoffs(wLowFreq, wHighFreq, mSampleRate);
 
     float wLow = cache.bands[0].width->load();
     float wMid = cache.bands[1].width->load();
     float wHigh = cache.bands[2].width->load();
 
-    // ⚡ 修正3: Widthがデフォルト(1.0)から動かされた時だけ、クロスオーバーとWidth処理を通す
-    // これにより、デフォルト時は位相回転(Peak上昇)が完全に防がれ、Nullチェックが合うようになります。
     if (wLow != 1.0f || wMid != 1.0f || wHigh != 1.0f) {
         if (numChannels == 2) msEncoder.encodeMidSide(processingBuffer);
         widthEngine.processMS(processingBuffer, wLow, wMid, wHigh);

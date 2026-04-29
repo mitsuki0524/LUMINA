@@ -10,15 +10,18 @@
 struct AnalysisFrame {
     bool isOnset = false;
     std::array<float, 24> barkPower{};
-    std::array<float, 24> barkGainReductionM{}; // ⚡ Mid用
-    std::array<float, 24> barkGainReductionS{}; // ⚡ Side用
+    std::array<float, 24> barkGainReductionM{};
+    std::array<float, 24> barkGainReductionS{};
+
+    // ⚡ [ADD] 心理音響可視化用の閾値データ
+    std::array<float, 24> barkMaskingThreshold{};
 
     std::array<float, 512> unprocessedSpectrum{};
     std::array<float, 512> magnitudeSpectrum{};
     std::array<float, 512> tameSpectrum{};
 
     int activeSoloBand = -1;
-    double internalSampleRate = 44100.0; // ⚡ 追加：サンプリングレート情報を保持
+    double internalSampleRate = 44100.0;
 };
 
 class AnalysisFifo {
@@ -40,10 +43,8 @@ public:
         }
         return false;
     }
-
 private:
     juce::AbstractFifo abstractFifo;
     std::array<AnalysisFrame, 32> buffer;
 };
-
-#endif // LUMINA_ANALYSISFIFO_H
+#endif

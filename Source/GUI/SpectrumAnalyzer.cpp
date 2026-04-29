@@ -17,10 +17,18 @@ void SpectrumAnalyzer::updateFrame(const AnalysisFrame& frame)
     // ⚡ 波形描画のスピード調整 (時間的フォールオフ)。値が小さいほど滑らかでゆっくりに。
     float alpha = 0.10f;
 
+    // ⚡ 内部サンプリングレートの更新
+    currentFrame.internalSampleRate = frame.internalSampleRate;
+
     for (size_t i = 0; i < 512; ++i) {
         currentFrame.unprocessedSpectrum[i] = currentFrame.unprocessedSpectrum[i] * (1.0f - alpha) + frame.unprocessedSpectrum[i] * alpha;
         currentFrame.magnitudeSpectrum[i] = currentFrame.magnitudeSpectrum[i] * (1.0f - alpha) + frame.magnitudeSpectrum[i] * alpha;
         currentFrame.tameSpectrum[i] = currentFrame.tameSpectrum[i] * (1.0f - alpha) + frame.tameSpectrum[i] * alpha;
+    }
+
+    // ⚡ マスキング閾値の平滑化更新を追加
+    for (size_t i = 0; i < 24; ++i) {
+        currentMaskingThreshold[i] = currentMaskingThreshold[i] * (1.0f - alpha) + frame.barkMaskingThreshold[i] * alpha;
     }
 }
 
@@ -178,17 +186,53 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         }
     }
 
+    // ⚡ スペクトラム・チルト設定 (ピンクノイズを水平に表示させるための補正)
+    const float tiltPerOctave = 3.0f;  // +3dB / Octave
+    const float tiltRefFreq = 1000.0f; // 1kHzを基準(0dB)とする
+
+    // ⚡ Y座標計算の共通ラムダ式 (一括してチルト補正とY座標変換を行う)
+    auto calcY = [&](float linearMag, float freq) -> float {
+        float db = juce::Decibels::gainToDecibels(linearMag, minDB);
+        float tiltDB = tiltPerOctave * std::log2(std::max(20.0f, freq) / tiltRefFreq);
+        db = juce::jlimit(minDB, maxDB, db + tiltDB);
+        return juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
+        };
+
+    // ==========================================
+    // ⚡ 1. 心理音響マスキング閾値の描画 (ゴースト曲線)
+    // ==========================================
+    const float barkCenters[24] = { 50, 150, 250, 350, 450, 570, 700, 840, 1000, 1170, 1370, 1600, 1850, 2150, 2500, 2900, 3400, 4000, 4800, 5800, 7000, 8500, 10500, 13500 };
+
+    juce::Path maskPath;
+    bool maskStarted = false;
+    for (int b = 0; b < 24; ++b) {
+        float mag = currentMaskingThreshold[b];
+        if (mag > 0.0f) {
+            float freq = barkCenters[b];
+            float x = getXFromFreq(freq, bounds.getWidth());
+            float y = calcY(mag, freq);
+
+            if (!maskStarted) { maskPath.startNewSubPath(x, y); maskStarted = true; }
+            else { maskPath.lineTo(x, y); }
+        }
+    }
+    if (maskStarted) {
+        g.setColour(juce::Colour::fromString("80FFD700")); // 少し発光するGold (50%不透明度)
+        g.strokePath(maskPath, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved));
+    }
+
+    // ==========================================
+    // ⚡ 2. 未処理スペクトラムの描画 (Pre)
+    // ==========================================
     juce::Path prePath;
     bool preStarted = false;
     for (size_t i = 0; i < 512; ++i) {
         float mag = smoothedPre[i];
         if (mag > 0.0f) {
-            float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
-            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
-// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
-            float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
+            float y = calcY(mag, freq);
+
             if (!preStarted) { prePath.startNewSubPath(x, bounds.getHeight()); prePath.lineTo(x, y); preStarted = true; }
             else { prePath.lineTo(x, y); }
         }
@@ -199,28 +243,26 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         g.fillPath(prePath);
     }
 
+    // ==========================================
+    // ⚡ 3. 抑制された量 (Tame) の描画
+    // ==========================================
     juce::Path tamePath;
     bool hasTame = false;
     for (size_t i = 0; i < 512; ++i) {
         if (smoothedTame[i] < 0.99f) hasTame = true;
-        float dbTop = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(smoothedPre[i], minDB));
-        // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
-// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
         float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
         float x = getXFromFreq(freq, bounds.getWidth());
-        float yTop = juce::jmap(dbTop, minDB, maxDB, bounds.getHeight(), 0.0f);
+        float yTop = calcY(smoothedPre[i], freq);
+
         if (i == 0) tamePath.startNewSubPath(x, yTop);
         else tamePath.lineTo(x, yTop);
     }
     if (hasTame) {
         for (int i = 511; i >= 0; --i) {
-            float magBot = smoothedPre[i] * smoothedTame[i];
-            float dbBot = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magBot, minDB));
-            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
-// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
+            float magBot = smoothedPre[i] * smoothedTame[i];
             float x = getXFromFreq(freq, bounds.getWidth());
-            float yBot = juce::jmap(dbBot, minDB, maxDB, bounds.getHeight(), 0.0f);
+            float yBot = calcY(magBot, freq);
             tamePath.lineTo(x, yBot);
         }
         tamePath.closeSubPath();
@@ -229,16 +271,18 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         g.fillPath(tamePath);
     }
 
+    // ==========================================
+    // ⚡ 4. 処理後スペクトラムの描画 (Post)
+    // ==========================================
     juce::Path postPath;
     bool postStarted = false;
     for (size_t i = 0; i < 512; ++i) {
         float mag = smoothedPost[i];
         if (mag > 0.0f) {
-            float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
-            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
-            float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * nyquist);
+            float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
-            float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
+            float y = calcY(mag, freq);
+
             if (!postStarted) { postPath.startNewSubPath(x, bounds.getHeight()); postPath.lineTo(x, y); postStarted = true; }
             else { postPath.lineTo(x, y); }
         }
