@@ -15,7 +15,7 @@ SpectrumAnalyzer::~SpectrumAnalyzer() {}
 void SpectrumAnalyzer::updateFrame(const AnalysisFrame& frame)
 {
     // ⚡ 波形描画のスピード調整 (時間的フォールオフ)。値が小さいほど滑らかでゆっくりに。
-    float alpha = 0.25f;
+    float alpha = 0.10f;
 
     for (size_t i = 0; i < 512; ++i) {
         currentFrame.unprocessedSpectrum[i] = currentFrame.unprocessedSpectrum[i] * (1.0f - alpha) + frame.unprocessedSpectrum[i] * alpha;
@@ -108,6 +108,11 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     auto bounds = getLocalBounds().toFloat();
     g.fillAll(juce::Colour::fromString("FF1A1A1A"));
 
+    // ⚡ 定数設定：マスタリングに最適な表示レンジ (-72dB 〜 0dB)
+    const float minDB = -72.0f;
+    const float maxDB = 0.0f;
+    const float nyquist = static_cast<float>(currentFrame.internalSampleRate) * 0.5f;
+
     g.setColour(juce::Colours::white.withAlpha(0.1f));
     const float freqs[] = { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f };
     for (float f : freqs) {
@@ -124,16 +129,12 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.setColour(draggingCrossIndex == 1 ? juce::Colours::white : juce::Colours::white.withAlpha(0.3f));
     g.drawVerticalLine(static_cast<int>(x2), 0.0f, bounds.getHeight());
 
-    // ⚡ 復活: ドラッグ中の周波数をテキスト表示
     if (isDragging) {
         g.setColour(juce::Colours::white);
         float drawX = (draggingCrossIndex == 0) ? x1 : x2;
         juce::String freqStr = juce::String(currentDragFreq, 0) + " Hz";
         g.drawText(freqStr, static_cast<int>(drawX) + 5, 10, 80, 20, juce::Justification::topLeft);
     }
-
-    const float minDB = -80.0f;
-    const float maxDB = 18.0f;
 
     juce::Colour colourLow = juce::Colour::fromString("FFFF8C00");
     juce::Colour colourMid = juce::Colour::fromString("FF764DFF");
@@ -183,6 +184,8 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         float mag = smoothedPre[i];
         if (mag > 0.0f) {
             float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
+            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
+// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
             float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
@@ -201,6 +204,8 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     for (size_t i = 0; i < 512; ++i) {
         if (smoothedTame[i] < 0.99f) hasTame = true;
         float dbTop = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(smoothedPre[i], minDB));
+        // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
+// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
         float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
         float x = getXFromFreq(freq, bounds.getWidth());
         float yTop = juce::jmap(dbTop, minDB, maxDB, bounds.getHeight(), 0.0f);
@@ -211,6 +216,8 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         for (int i = 511; i >= 0; --i) {
             float magBot = smoothedPre[i] * smoothedTame[i];
             float dbBot = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magBot, minDB));
+            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
+// ⚡ 修正：データが常に22050Hzまでの範囲になったので、基準を固定する
             float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
             float x = getXFromFreq(freq, bounds.getWidth());
             float yBot = juce::jmap(dbBot, minDB, maxDB, bounds.getHeight(), 0.0f);
@@ -228,7 +235,8 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
         float mag = smoothedPost[i];
         if (mag > 0.0f) {
             float db = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(mag, minDB));
-            float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * 22050.0f);
+            // ⚡ 修正：内部レートに基づく動的ナイキスト周波数を使用
+            float freq = juce::jlimit(20.0f, 20000.0f, (static_cast<float>(i) / 512.0f) * nyquist);
             float x = getXFromFreq(freq, bounds.getWidth());
             float y = juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
             if (!postStarted) { postPath.startNewSubPath(x, bounds.getHeight()); postPath.lineTo(x, y); postStarted = true; }

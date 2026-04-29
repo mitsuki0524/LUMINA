@@ -551,11 +551,14 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     else dynEnvelopes[ch][bark] = current * relCoeff + target * (1.0f - relCoeff);
                 }
 
-                if (ch == 1) {
+                // ⚡ 修正: Side(1)ではなく、Mid(0)成分を画面に送る。
+                // これによりL+R（モノラル）入力時でも波形が確実に表示されます。
+                if (ch == 0) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
                     frame.barkPower = barkPower;
+                    frame.internalSampleRate = mSampleRate; // ⚡ 追加：現在の内部レートをセット
 
                     for (int i = 0; i < 24; ++i) {
                         frame.barkGainReductionM[i] = dynEnvelopes[0][i];
@@ -569,25 +572,40 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     frame.activeSoloBand = soloBandIdx;
 
                     const int uiBins = 512;
-                    const int binsPerUI = nBins / uiBins;
+                    const float targetFreqLimit = 22050.0f;
+                    const float binFreq = static_cast<float>(mSampleRate) / static_cast<float>(mFftSize);
+
+                    int maxAudibleBin = static_cast<int>(targetFreqLimit / binFreq);
+                    maxAudibleBin = juce::jlimit(uiBins, nBins, maxAudibleBin);
+
+                    // ⚡ 修正：OSによって binsPerUI が 0 になるのを防ぎ、精度を確保
+                    const int binsPerUI = std::max(1, maxAudibleBin / uiBins);
+
+                    // ⚡ 修正：表示ゲインを 15.0f まで引き上げ（ドラム等のピークを8割にするため）
+                    const float visualGain = 18.0f;
+
                     for (int i = 0; i < uiBins; ++i) {
                         float sumPost = 0.0f;
                         float sumPre = 0.0f;
                         float minTame = 1.0f;
                         int startIdx = i * binsPerUI;
+
                         for (int j = 0; j < binsPerUI; ++j) {
                             int idx = startIdx + j;
                             if (idx < nBins) {
-                                sumPre += rawMags[idx] * rawMags[idx];
-                                float postMag = rawMags[idx] * binGains[idx];
-                                sumPost += postMag * postMag;
+                                // 振幅(magnitude)の平均をとる方式に変更して視認性を安定化
+                                sumPre += rawMags[idx];
+                                sumPost += rawMags[idx] * binGains[idx];
                                 if (binTameGains[idx] < minTame) minTame = binTameGains[idx];
                             }
                         }
-                        frame.unprocessedSpectrum[i] = std::sqrt(sumPre / binsPerUI + 1e-12f);
-                        frame.magnitudeSpectrum[i] = std::sqrt(sumPost / binsPerUI + 1e-12f);
+
+                        // ⚡ 修正：平均値を算出し、大幅に引き上げたゲインを適用
+                        frame.unprocessedSpectrum[i] = (sumPre / (float)binsPerUI) * visualGain;
+                        frame.magnitudeSpectrum[i] = (sumPost / (float)binsPerUI) * visualGain;
                         frame.tameSpectrum[i] = minTame;
                     }
+
                     analysisFifo.push(frame);
                 }
             });
@@ -674,7 +692,11 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     juce::AudioBuffer<float> processingBuffer(channelData, numChannels, osNumSamples);
 
-    msEncoder.encodeMidSide(processingBuffer);
+    // ⚡ 修正1: MSモードがONの時だけ、FFT処理のためにM/Sエンコードを行う
+    // これにより、通常のL/Rモード時にドラムのセンター定位が揺れるバグ（レゾナンス感）が消滅します。
+    if (isMsMode && numChannels == 2) {
+        msEncoder.encodeMidSide(processingBuffer);
+    }
 
     float lookaheadMs = cache.lookahead->load();
     int delaySamples = static_cast<int>(lookaheadMs * mSampleRate / 1000.0f);
@@ -702,6 +724,11 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         spectralEngines[ch].process(data, data, osNumSamples);
     }
 
+    // ⚡ 修正2: FFT処理が終わったら、Width処理の前に一旦L/Rに戻す
+    if (isMsMode && numChannels == 2) {
+        msEncoder.decodeMidSide(processingBuffer);
+    }
+
     float wLowFreq = cache.widthCross1->load();
     float wHighFreq = cache.widthCross2->load();
     widthEngine.setCutoffs(wLowFreq, wHighFreq);
@@ -710,11 +737,16 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     float wMid = cache.bands[1].width->load();
     float wHigh = cache.bands[2].width->load();
 
-    widthEngine.processMS(processingBuffer, wLow, wMid, wHigh);
-
-    msEncoder.decodeMidSide(processingBuffer);
+    // ⚡ 修正3: Widthがデフォルト(1.0)から動かされた時だけ、クロスオーバーとWidth処理を通す
+    // これにより、デフォルト時は位相回転(Peak上昇)が完全に防がれ、Nullチェックが合うようになります。
+    if (wLow != 1.0f || wMid != 1.0f || wHigh != 1.0f) {
+        if (numChannels == 2) msEncoder.encodeMidSide(processingBuffer);
+        widthEngine.processMS(processingBuffer, wLow, wMid, wHigh);
+        if (numChannels == 2) msEncoder.decodeMidSide(processingBuffer);
+    }
 
     float alTimeSetting = cache.autoLevelTimePro->load();
+
     float timeSecAL = (alTimeSetting == 0.0f) ? 3.0f : (alTimeSetting == 1.0f ? 10.0f : (alTimeSetting == 2.0f ? 30.0f : 300.0f));
     juce::ignoreUnused(timeSecAL);
 

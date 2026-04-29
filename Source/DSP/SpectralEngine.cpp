@@ -128,7 +128,7 @@ void SpectralEngine::processWOLA()
     int N = currentFftSize;
     int numBins = N / 2 + 1;
 
-    // ⚡ SIMD最適化: 分析窓関数の乗算とゼロパディング
+    // SIMD最適化: 分析窓関数の乗算とゼロパディング
     juce::FloatVectorOperations::multiply(tData, inFifo, win, N);
     juce::FloatVectorOperations::clear(tData + N, N);
 
@@ -178,7 +178,7 @@ void SpectralEngine::processWOLA()
     float* outFifo = outputFifo.getData();
     float correction = gainCorrection;
 
-    // ⚡ 最適化: 合成窓関数の適用、ゲイン補正、およびオーバーラップ加算を1つのループで実行
+    // 最適化: 合成窓関数の適用、ゲイン補正、およびオーバーラップ加算を1つのループで実行
     for (int i = 0; i < N; ++i) {
         float outSample = tData[i];
         if (std::isnan(outSample) || std::isinf(outSample)) outSample = 0.0f;

@@ -18,6 +18,7 @@ struct AnalysisFrame {
     std::array<float, 512> tameSpectrum{};
 
     int activeSoloBand = -1;
+    double internalSampleRate = 44100.0; // ⚡ 追加：サンプリングレート情報を保持
 };
 
 class AnalysisFifo {
