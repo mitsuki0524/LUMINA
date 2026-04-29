@@ -273,11 +273,15 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         oversampler.reset();
     }
 
+    // --- 変更後：4倍速以上の極限状態にも対応する新しいルール ---
     mSampleRate = sampleRate * static_cast<double>(osFactor);
 
-    if (mSampleRate >= 176400.0)      mFftSize = 16384;
-    else if (mSampleRate >= 88200.0)  mFftSize = 8192;
-    else                              mFftSize = 4096;
+    // ⚡ 内部スピードが上がるほど、分析の「箱（FFTサイズ）」を大きくして、低域の解像度を一定に保つ
+    if (mSampleRate >= 705600.0)       mFftSize = 65536; // 192kHzの4倍速(768kHz)などに完全対応
+    else if (mSampleRate >= 352800.0)  mFftSize = 32768; // 96kHzの4倍速(384kHz)などで低音が痩せないように拡張
+    else if (mSampleRate >= 176400.0)  mFftSize = 16384; // 192kHzの等倍/2倍速用
+    else if (mSampleRate >= 88200.0)   mFftSize = 8192;  // 96kHzの等倍用
+    else                               mFftSize = 4096;  // 44.1k/48k用
 
     const int numBins = mFftSize / 2 + 1;
     const int hopSize = mFftSize / 4;
