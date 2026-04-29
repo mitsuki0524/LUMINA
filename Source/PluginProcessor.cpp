@@ -141,7 +141,6 @@ void LUMINAProcessor::changeProgramName(int index, const juce::String& newName) 
 
 void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // ⚡ Oversampling モジュールの初期化 (0=Off, 1=2x, 2=4x)
     currentOversamplingState = static_cast<int>(cache.oversampling->load());
     int osFactor = (currentOversamplingState == 0) ? 1 : ((currentOversamplingState == 1) ? 2 : 4);
 
@@ -153,18 +152,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         oversampler.reset();
     }
 
-    mSampleRate = sampleRate * static_cast<double>(osFactor); // 内部処理サンプリングレート
+    mSampleRate = sampleRate * static_cast<double>(osFactor);
 
     if (mSampleRate >= 176400.0)      mFftSize = 16384;
     else if (mSampleRate >= 88200.0)  mFftSize = 8192;
     else                              mFftSize = 4096;
 
     const int numBins = mFftSize / 2 + 1;
-    const int hopSize = mFftSize / 4; // 75% Overlap
+    const int hopSize = mFftSize / 4;
 
     inputCopyBuffer.setSize(2, samplesPerBlock);
 
-    // Lookahead バッファの確保 (最大10ms想定)
     int maxLookaheadSamples = static_cast<int>(10.0f * mSampleRate / 1000.0f) + 2048;
     lookaheadBuffer.setSize(2, maxLookaheadSamples);
     lookaheadBuffer.clear();
@@ -192,7 +190,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (int ch = 0; ch < 2; ++ch)
     {
         spectralEngines[ch].prepare(mSampleRate, mFftSize, 0.75f);
-        hpssEngines[ch].prepare(numBins, 65, 65); // 動的解像度のため最大65で確保
+        hpssEngines[ch].prepare(numBins, 65, 65);
         maskingModels[ch].prepare(mSampleRate, mFftSize);
         onsetDetectors[ch].prepare(mSampleRate, numBins);
 
@@ -223,7 +221,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                 if (ch == 0) analyzerCore.processSpectrumFrame(power, nBins);
 
-                // ⚡ HPSSEngine はスカラー引数を受け取る構造のため、ここだけは平均値を使用（安全な現状維持）
                 float avgHpssRes = (cache.bands[0].hpssRes->load() + cache.bands[1].hpssRes->load() + cache.bands[2].hpssRes->load()) / 3.0f;
                 float avgHpssBlur = (cache.bands[0].hpssBlur->load() + cache.bands[1].hpssBlur->load() + cache.bands[2].hpssBlur->load()) / 3.0f;
 
@@ -238,29 +235,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 const float cross1 = std::max(20.0f, cache.cross1->load());
                 const float cross2 = std::max(20.0f, cache.cross2->load());
 
-                // ⚡ PRO_MODE 状態の取得
-                const bool proMode = cache.proMode->load() > 0.5f;
-
                 std::array<BandParams, 3> bands{};
                 bool anySolo = false;
                 float tameSharp[3];
 
                 for (int b = 0; b < 3; ++b) {
-                    // ⚡ Pro Mode が OFF の場合は強制的にリンク状態 (linkAmt=1.0) にする完全独立化対応
-                    bool isLinked = (cache.bands[b].link->load() > 0.5f) || !proMode;
-                    float linkAmt = proMode ? cache.bands[b].linkAmt->load() : 1.0f;
+                    bool isLinked = cache.bands[b].link->load() > 0.5f;
+                    float linkAmt = cache.bands[b].linkAmt->load();
 
                     if (isSide) {
                         if (isLinked) {
-                            bands[b].tameM = cache.bands[b].tame->load();
-                            bands[b].threshold = cache.bands[b].threshM->load();
-                            bands[b].depth = cache.bands[b].depthM->load();
-                            bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalM->load());
-                            bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transM->load());
-                            bands[b].attack = cache.bands[b].attackM->load();
-                            bands[b].release = cache.bands[b].releaseM->load();
-                        }
-                        else {
+                            // ⚡ 修正: Link ON時は、LinkAmtに応じてMid/Sideのパラメータをブレンドする
                             auto interpolate = [linkAmt](float midVal, float sideVal) { return sideVal * (1.0f - linkAmt) + midVal * linkAmt; };
                             bands[b].tameM = interpolate(cache.bands[b].tame->load(), cache.bands[b].tameS->load());
                             bands[b].threshold = interpolate(cache.bands[b].threshM->load(), cache.bands[b].threshS->load());
@@ -270,8 +255,19 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                             bands[b].attack = interpolate(cache.bands[b].attackM->load(), cache.bands[b].attackS->load());
                             bands[b].release = interpolate(cache.bands[b].releaseM->load(), cache.bands[b].releaseS->load());
                         }
+                        else {
+                            // ⚡ 修正: Link OFF時は、一切のブレンドを排除し、Sideの値を完全に独立して使用する
+                            bands[b].tameM = cache.bands[b].tameS->load();
+                            bands[b].threshold = cache.bands[b].threshS->load();
+                            bands[b].depth = cache.bands[b].depthS->load();
+                            bands[b].tonalShift = juce::Decibels::decibelsToGain(cache.bands[b].tonalS->load());
+                            bands[b].transShift = juce::Decibels::decibelsToGain(cache.bands[b].transS->load());
+                            bands[b].attack = cache.bands[b].attackS->load();
+                            bands[b].release = cache.bands[b].releaseS->load();
+                        }
                     }
                     else {
+                        // Mid チャンネル (または Stereoモード) は常にMidのパラメータを使用
                         bands[b].tameM = cache.bands[b].tame->load();
                         bands[b].threshold = cache.bands[b].threshM->load();
                         bands[b].depth = cache.bands[b].depthM->load();
@@ -289,7 +285,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     tameSharp[b] = cache.bands[b].tameSharp->load();
                 }
 
-                // ⚡ 帯域別のウェイト(wLow, wMid, wHigh) と Tame Speed を事前計算
                 std::vector<float> wLowArr(nBins, 0.0f);
                 std::vector<float> wMidArr(nBins, 0.0f);
                 std::vector<float> wHighArr(nBins, 0.0f);
@@ -328,13 +323,11 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     wMidArr[i] = wMid;
                     wHighArr[i] = wHigh;
 
-                    // ⚡ Tame Speed の独立化: 各帯域の設定値を周波数ブレンドで計算
                     smoothAlphas[i] = (cache.bands[0].tameSpeed->load() * wLow) +
                         (cache.bands[1].tameSpeed->load() * wMid) +
                         (cache.bands[2].tameSpeed->load() * wHigh);
                 }
 
-                // ⚡ 平均化を廃止し、Binごとの独立したスムージングスピードを適用
                 std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
                 env[0] = rawMags[0];
                 for (int i = 1; i < nBins; ++i) {
@@ -352,7 +345,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     int barkIdx = binToBarkMap[i];
                     float tRatio = tonalRatio[barkIdx];
 
-                    // 事前計算したウェイトを使用
                     float wLow = wLowArr[i];
                     float wMid = wMidArr[i];
                     float wHigh = wHighArr[i];
@@ -428,7 +420,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     else dynEnvelopes[ch][bark] = current * relCoeff + target * (1.0f - relCoeff);
                 }
 
-                if (ch == 1 || !isMsMode) {
+                if (ch == 1) {
                     handleAutoBandResult();
                     AnalysisFrame frame;
                     frame.isOnset = isOnset;
@@ -436,7 +428,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                     for (int i = 0; i < 24; ++i) {
                         frame.barkGainReductionM[i] = dynEnvelopes[0][i];
-                        frame.barkGainReductionS[i] = isMsMode ? dynEnvelopes[1][i] : dynEnvelopes[0][i];
+                        frame.barkGainReductionS[i] = dynEnvelopes[1][i];
                     }
 
                     int soloBandIdx = -1;
@@ -470,7 +462,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
             });
     }
 
-    // ⚡ レイテンシー報告
     int fftLatency = mFftSize;
     float currentLookaheadMs = cache.lookahead->load();
     int laLatency = static_cast<int>(currentLookaheadMs * mSampleRate / 1000.0f);
@@ -516,7 +507,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     float inGain = juce::Decibels::decibelsToGain(cache.masterInGain->load());
     buffer.applyGain(inGain);
 
-    // ⚡ Oversampling の適用 (有効時のみ)
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> osBlock = block;
     if (oversampler != nullptr) {
@@ -554,7 +544,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         msEncoder.encodeMidSide(processingBuffer);
     }
 
-    // ⚡ Lookahead リングバッファ処理
     float lookaheadMs = cache.lookahead->load();
     int delaySamples = static_cast<int>(lookaheadMs * mSampleRate / 1000.0f);
     int lbSize = lookaheadBuffer.getNumSamples();
@@ -581,7 +570,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         spectralEngines[ch].process(data, data, osNumSamples);
     }
 
-    // ⚡ ステレオイメージング (Width & Decorrelation)
     float wLowFreq = cache.widthCross1->load();
     float wHighFreq = cache.widthCross2->load();
     widthEngine.setCutoffs(wLowFreq, wHighFreq);
