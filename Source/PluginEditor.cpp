@@ -489,6 +489,9 @@ void LUMINAEditor::timerCallback()
     bool isPro = processor.apvts.getRawParameterValue("PRO_MODE")->load() > 0.5f;
     juce::StringArray prefixes = { "B1_", "B2_", "B3_" };
 
+    // ⚡ 追加: 書き換え用のベース名リスト
+    juce::StringArray baseLabelNames = { "Threshold", "Depth", "Tonal", "Transient" };
+
     oversamplingCombo.setVisible(isPro); oversamplingLabel.setVisible(isPro);
     lookaheadSlider.setVisible(isPro); lookaheadLabel.setVisible(isPro);
     widthCross1Slider.setVisible(isPro); widthCross1Label.setVisible(isPro);
@@ -499,6 +502,9 @@ void LUMINAEditor::timerCallback()
     for (int b = 0; b < 3; ++b) {
         bool isBypass = processor.apvts.getRawParameterValue(prefixes[b] + "BYPASS")->load() > 0.5f;
         float alpha = isBypass ? 0.25f : 1.0f;
+
+        // ⚡ 追加: ステレオ時は "(M)" の表記を消す
+        juce::String msSuffix = isMSMode ? " (M)" : "";
 
         bandTameM[b].setAlpha(alpha); bandTameS[b].setAlpha(alpha);
         bandTameLabel[b].setAlpha(alpha);
@@ -521,6 +527,9 @@ void LUMINAEditor::timerCallback()
         proLinkAmt[b].setVisible(isPro);   proLinkAmtLabel[b].setVisible(isPro);
 
         for (int p = 0; p < 4; ++p) {
+            // ⚡ 追加: ノブのラベルを動的に更新
+            bandLabelsM[b][p].setText(baseLabelNames[p] + msSuffix, juce::dontSendNotification);
+
             bandSlidersM[b][p].setAlpha(alpha); bandLabelsM[b][p].setAlpha(alpha);
             bandSlidersS[b][p].setAlpha(alpha); bandLabelsS[b][p].setAlpha(alpha);
 
@@ -529,6 +538,10 @@ void LUMINAEditor::timerCallback()
             bandSlidersS[b][p].setVisible(!isPro && currentTabIsSide[b]);
             bandLabelsS[b][p].setVisible(!isPro && currentTabIsSide[b]);
         }
+
+        // ⚡ 追加: Proモード用のAttack / Releaseのラベルも動的に更新
+        proAttackMLabel[b].setText("Attack" + msSuffix, juce::dontSendNotification);
+        proReleaseMLabel[b].setText("Release" + msSuffix, juce::dontSendNotification);
 
         proAttackM[b].setAlpha(alpha); proAttackMLabel[b].setAlpha(alpha);
         proAttackS[b].setAlpha(alpha); proAttackSLabel[b].setAlpha(alpha);

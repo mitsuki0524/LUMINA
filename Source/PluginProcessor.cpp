@@ -223,7 +223,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                 if (ch == 0) analyzerCore.processSpectrumFrame(power, nBins);
 
-                // ⚡ 未開通パラメータの統合: HPSS Res / Blur (3バンドの平均値を算出)
+                // ⚡ HPSSEngine はスカラー引数を受け取る構造のため、ここだけは平均値を使用（安全な現状維持）
                 float avgHpssRes = (cache.bands[0].hpssRes->load() + cache.bands[1].hpssRes->load() + cache.bands[2].hpssRes->load()) / 3.0f;
                 float avgHpssBlur = (cache.bands[0].hpssBlur->load() + cache.bands[1].hpssBlur->load() + cache.bands[2].hpssBlur->load()) / 3.0f;
 
@@ -238,17 +238,20 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                 const float cross1 = std::max(20.0f, cache.cross1->load());
                 const float cross2 = std::max(20.0f, cache.cross2->load());
 
+                // ⚡ PRO_MODE 状態の取得
+                const bool proMode = cache.proMode->load() > 0.5f;
+
                 std::array<BandParams, 3> bands{};
                 bool anySolo = false;
                 float tameSharp[3];
 
                 for (int b = 0; b < 3; ++b) {
-                    bool isLinked = cache.bands[b].link->load() > 0.5f;
-                    float linkAmt = cache.bands[b].linkAmt->load(); // ⚡ Link Amtの取得
+                    // ⚡ Pro Mode が OFF の場合は強制的にリンク状態 (linkAmt=1.0) にする完全独立化対応
+                    bool isLinked = (cache.bands[b].link->load() > 0.5f) || !proMode;
+                    float linkAmt = proMode ? cache.bands[b].linkAmt->load() : 1.0f;
 
                     if (isSide) {
                         if (isLinked) {
-                            // リンク時はMidの値を完全コピー
                             bands[b].tameM = cache.bands[b].tame->load();
                             bands[b].threshold = cache.bands[b].threshM->load();
                             bands[b].depth = cache.bands[b].depthM->load();
@@ -258,9 +261,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                             bands[b].release = cache.bands[b].releaseM->load();
                         }
                         else {
-                            // ⚡ Link Amt に基づく線形補間 (0.0=独立, 1.0=Midと同一)
                             auto interpolate = [linkAmt](float midVal, float sideVal) { return sideVal * (1.0f - linkAmt) + midVal * linkAmt; };
-
                             bands[b].tameM = interpolate(cache.bands[b].tame->load(), cache.bands[b].tameS->load());
                             bands[b].threshold = interpolate(cache.bands[b].threshM->load(), cache.bands[b].threshS->load());
                             bands[b].depth = interpolate(cache.bands[b].depthM->load(), cache.bands[b].depthS->load());
@@ -288,28 +289,17 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     tameSharp[b] = cache.bands[b].tameSharp->load();
                 }
 
-                // ⚡ Tame Speed の独立化 (Midバンド固定値だったものを全バンド平均に修正、または個別化)
-                float smoothAlpha = (cache.bands[0].tameSpeed->load() + cache.bands[1].tameSpeed->load() + cache.bands[2].tameSpeed->load()) / 3.0f;
-                std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
-                env[0] = rawMags[0];
-                for (int i = 1; i < nBins; ++i) {
-                    env[i] = env[i - 1] * smoothAlpha + rawMags[i] * (1.0f - smoothAlpha);
-                }
-                for (int i = nBins - 2; i >= 0; --i) {
-                    env[i] = env[i + 1] * smoothAlpha + env[i] * (1.0f - smoothAlpha);
-                }
+                // ⚡ 帯域別のウェイト(wLow, wMid, wHigh) と Tame Speed を事前計算
+                std::vector<float> wLowArr(nBins, 0.0f);
+                std::vector<float> wMidArr(nBins, 0.0f);
+                std::vector<float> wHighArr(nBins, 0.0f);
+                std::vector<float> smoothAlphas(nBins, 0.0f);
 
                 const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
                 const float transRatio = 1.414f;
-                std::array<float, 24> barkTargetGR;
-                barkTargetGR.fill(1.0f);
 
-                for (int i = 0; i < nBins; ++i)
-                {
+                for (int i = 0; i < nBins; ++i) {
                     float hz = std::max(1.0f, static_cast<float>(i) * bFreq);
-                    int barkIdx = binToBarkMap[i];
-                    float tRatio = tonalRatio[barkIdx];
-
                     float wLow = 1.0f, wMid = 0.0f, wHigh = 0.0f;
                     float logHz = std::log2(hz);
 
@@ -333,6 +323,39 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                             wHigh = wMid * mix; wMid = wMid * (1.0f - mix);
                         }
                     }
+
+                    wLowArr[i] = wLow;
+                    wMidArr[i] = wMid;
+                    wHighArr[i] = wHigh;
+
+                    // ⚡ Tame Speed の独立化: 各帯域の設定値を周波数ブレンドで計算
+                    smoothAlphas[i] = (cache.bands[0].tameSpeed->load() * wLow) +
+                        (cache.bands[1].tameSpeed->load() * wMid) +
+                        (cache.bands[2].tameSpeed->load() * wHigh);
+                }
+
+                // ⚡ 平均化を廃止し、Binごとの独立したスムージングスピードを適用
+                std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
+                env[0] = rawMags[0];
+                for (int i = 1; i < nBins; ++i) {
+                    env[i] = env[i - 1] * smoothAlphas[i] + rawMags[i] * (1.0f - smoothAlphas[i]);
+                }
+                for (int i = nBins - 2; i >= 0; --i) {
+                    env[i] = env[i + 1] * smoothAlphas[i] + env[i] * (1.0f - smoothAlphas[i]);
+                }
+
+                std::array<float, 24> barkTargetGR;
+                barkTargetGR.fill(1.0f);
+
+                for (int i = 0; i < nBins; ++i)
+                {
+                    int barkIdx = binToBarkMap[i];
+                    float tRatio = tonalRatio[barkIdx];
+
+                    // 事前計算したウェイトを使用
+                    float wLow = wLowArr[i];
+                    float wMid = wMidArr[i];
+                    float wHigh = wHighArr[i];
 
                     float effTame0 = bands[0].isBypass ? 0.0f : bands[0].tameM;
                     float effTame1 = bands[1].isBypass ? 0.0f : bands[1].tameM;
@@ -447,14 +470,12 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
             });
     }
 
-    // ⚡ 修正：レイテンシー報告（OS換算）
+    // ⚡ レイテンシー報告
     int fftLatency = mFftSize;
     float currentLookaheadMs = cache.lookahead->load();
     int laLatency = static_cast<int>(currentLookaheadMs * mSampleRate / 1000.0f);
 
     int totalInternalSamples = fftLatency + laLatency;
-
-    // 変数 osFactor は冒頭(146行目)で定義済みのため型名(int)なしで使用
     int reportedLatency = totalInternalSamples / osFactor;
     if (oversampler != nullptr)
         reportedLatency += static_cast<int>(oversampler->getLatencyInSamples());
@@ -520,16 +541,13 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     const bool isMsMode = cache.msMode->load() > 0.5f;
 
-    // ⚡ M/S エンコード (内部は必ず L/R から M/S に変換して処理)
-// ⚡ M/S エンコード (内部は必ず L/R から M/S に変換して処理)
-    // AudioBufferに渡すためのチャンネルポインタ配列をスタック上に作成（DSP Safety）
     float* channelData[2] = { nullptr, nullptr };
     if (numChannels > 0) channelData[0] = osBlock.getChannelPointer(0);
     if (numChannels > 1) channelData[1] = osBlock.getChannelPointer(1);
 
     juce::AudioBuffer<float> processingBuffer(channelData, numChannels, osNumSamples);
 
-    if (!isMsMode) {        // ステレオモードであっても、Widthエンジンを通すために内部的にM/Sに変換する
+    if (!isMsMode) {
         msEncoder.encodeMidSide(processingBuffer);
     }
     else {
@@ -550,8 +568,8 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         if (readPos < 0) readPos += lbSize;
 
         for (int i = 0; i < osNumSamples; ++i) {
-            lbData[tempWritePos] = data[i];           // 現在の音を書き込む (解析用には遅延なしの inputCopyBuffer が渡される)
-            data[i] = lbData[readPos];                // 遅延させた音をDSPエンジンへ送る
+            lbData[tempWritePos] = data[i];
+            data[i] = lbData[readPos];
 
             tempWritePos++;
             if (tempWritePos >= lbSize) tempWritePos = 0;
@@ -560,7 +578,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         }
         if (ch == numChannels - 1) lookaheadWritePos = tempWritePos;
 
-        // 遅延された信号に対してFFT処理を適用
         spectralEngines[ch].process(data, data, osNumSamples);
     }
 
@@ -573,18 +590,12 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     float wMid = cache.bands[1].width->load();
     float wHigh = cache.bands[2].width->load();
 
-    // Width 1.0 以外の設定、または高域デコリレーションのために常時通過させます
     widthEngine.processMS(processingBuffer, wLow, wMid, wHigh);
 
-    // ⚡ M/S デコード (処理後に必ず L/R に戻す)
     msEncoder.decodeMidSide(processingBuffer);
 
-    // Auto Level 用の解析 (L/R 状態の出力バッファを使用)
-    // ⚡ 修正: Auto Level Time をハードコードからUIパラメータへ紐付け
     float alTimeSetting = cache.autoLevelTimePro->load();
     float timeSecAL = (alTimeSetting == 0.0f) ? 3.0f : (alTimeSetting == 1.0f ? 10.0f : (alTimeSetting == 2.0f ? 30.0f : 300.0f));
-    // AnalyzerCore 内でこの時間を使うためにセッターを設けるのがベストですが、
-    // 現在の規約上 AnalyzerCore.h の改変を最小化するため、Analyzer側で設定値を読めるようにするか既存APIを使います。
 
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),
@@ -593,7 +604,6 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     float wetRatio = cache.masterDryWet->load();
 
-    // ⚡ 修正: 同期タイミングの再計算
     float currentLAMs = cache.lookahead->load();
     int currentLASamples = static_cast<int>(currentLAMs * mSampleRate / 1000.0f);
     int totalInternalLatency = mFftSize + currentLASamples;
@@ -621,7 +631,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         }
         if (ch == numChannels - 1) delayWritePosition = tempWritePos;
     }
-    // ⚡ Oversampling ダウンサンプリング
+
     if (oversampler != nullptr) {
         oversampler->processSamplesDown(block);
     }
