@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginProcessor.cpp
+// ==========================================
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -10,9 +13,17 @@ LUMINAProcessor::LUMINAProcessor()
 #endif
 {
     updateParamCache();
+
+    // ⚡ Rebuildトリガー用: O/S と Lookahead の変更を監視
+    apvts.addParameterListener("OVERSAMPLING", this);
+    apvts.addParameterListener("LOOKAHEAD", this);
 }
 
-LUMINAProcessor::~LUMINAProcessor() {}
+LUMINAProcessor::~LUMINAProcessor()
+{
+    apvts.removeParameterListener("OVERSAMPLING", this);
+    apvts.removeParameterListener("LOOKAHEAD", this);
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout LUMINAProcessor::createParameterLayout()
 {
@@ -128,6 +139,9 @@ void LUMINAProcessor::updateParamCache()
     }
 }
 
+// ==============================================================================
+// ⚡ 追加: JUCE AudioProcessor 必須ボイラープレート関数の実装
+// ==============================================================================
 const juce::String LUMINAProcessor::getName() const { return JucePlugin_Name; }
 bool LUMINAProcessor::acceptsMidi() const { return false; }
 bool LUMINAProcessor::producesMidi() const { return false; }
@@ -138,10 +152,117 @@ int LUMINAProcessor::getCurrentProgram() { return 0; }
 void LUMINAProcessor::setCurrentProgram(int index) {}
 const juce::String LUMINAProcessor::getProgramName(int index) { return {}; }
 void LUMINAProcessor::changeProgramName(int index, const juce::String& newName) {}
+// ==============================================================================
+
+
+
+// ⚡ 追加: Parameter Listener コールバック
+void LUMINAProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "OVERSAMPLING" || parameterID == "LOOKAHEAD")
+    {
+        // 変更を検知したら非同期でエンジン再構築とPDC更新をトリガー
+        triggerAsyncUpdate();
+    }
+}
+
+// ⚡ 追加: 安全な Rebuild アーキテクチャと PDC 報告
+void LUMINAProcessor::handleAsyncUpdate()
+{
+    // オーディオスレッドとの競合を防ぐためのロック取得
+    juce::SpinLock::ScopedLockType lock(processLock);
+
+    int newOSState = static_cast<int>(cache.oversampling->load());
+    float newLookaheadMs = cache.lookahead->load();
+
+    if (newOSState == currentOversamplingState && std::abs(newLookaheadMs - currentLookaheadMs) < 0.001f) {
+        return; // 変更なし
+    }
+
+    currentOversamplingState = newOSState;
+    currentLookaheadMs = newLookaheadMs;
+
+    int osFactor = (currentOversamplingState == 0) ? 1 : ((currentOversamplingState == 1) ? 2 : 4);
+
+    if (currentOversamplingState > 0) {
+        oversampler = std::make_unique<juce::dsp::Oversampling<float>>((size_t)2, currentOversamplingState, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple, true);
+        oversampler->initProcessing(static_cast<size_t>(mSamplesPerBlock));
+    }
+    else {
+        oversampler.reset();
+    }
+
+    mSampleRate = getSampleRate() * static_cast<double>(osFactor);
+
+    if (mSampleRate >= 176400.0)      mFftSize = 16384;
+    else if (mSampleRate >= 88200.0)  mFftSize = 8192;
+    else                              mFftSize = 4096;
+
+    const int numBins = mFftSize / 2 + 1;
+    const int hopSize = mFftSize / 4;
+
+    int maxLookaheadSamples = static_cast<int>(10.0f * mSampleRate / 1000.0f) + 2048;
+    lookaheadBuffer.setSize(2, maxLookaheadSamples);
+    lookaheadBuffer.clear();
+    lookaheadWritePos = 0;
+
+    dryDelayBuffer.setSize(2, mFftSize + mSamplesPerBlock + maxLookaheadSamples);
+    dryDelayBuffer.clear();
+    delayWritePosition = 0;
+
+    analyzerCore.prepare(mSampleRate, mFftSize, hopSize);
+    widthEngine.prepare(mSampleRate, mSamplesPerBlock);
+
+    binToBarkMap.assign(static_cast<size_t>(numBins), 0);
+    const float binFreq = static_cast<float>(mSampleRate) / static_cast<float>(mFftSize);
+    for (int i = 0; i < numBins; ++i)
+    {
+        float hz = static_cast<float>(i) * binFreq;
+        float bark = 13.0f * std::atan(0.00076f * hz) + 3.5f * std::atan(std::pow(hz / 7500.0f, 2.0f));
+        int barkIdx = static_cast<int>(std::floor(bark));
+        binToBarkMap[i] = (barkIdx < 0) ? 0 : (barkIdx >= 24 ? 23 : barkIdx);
+    }
+
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        spectralEngines[ch].prepare(mSampleRate, mFftSize, 0.75f);
+        hpssEngines[ch].prepare(numBins, 65, 65);
+        maskingModels[ch].prepare(mSampleRate, mFftSize);
+        onsetDetectors[ch].prepare(mSampleRate, numBins);
+
+        // DSPワークスペースのメモリ再確保（processBlock内でnewを発生させないため）
+        powerWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        tonalMaskWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
+        binGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
+        tameGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
+
+        rawMagsWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wLowArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wMidArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wHighArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        smoothAlphasWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        envWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+    }
+
+    // 新しいレイテンシーの計算とDAWへの通知
+    int fftLatency = mFftSize;
+    int laLatency = static_cast<int>(currentLookaheadMs * mSampleRate / 1000.0f);
+    int totalInternalSamples = fftLatency + laLatency;
+    int reportedLatency = totalInternalSamples / osFactor;
+    if (oversampler != nullptr)
+        reportedLatency += static_cast<int>(oversampler->getLatencyInSamples());
+
+    setLatencySamples(reportedLatency);
+    updateHostDisplay(); // ⚡ DAWへPDCの更新を強制
+}
 
 void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    mSamplesPerBlock = samplesPerBlock; // 保持
+
+    // 初回の同期的な初期化（handleAsyncUpdate と同等の処理）
     currentOversamplingState = static_cast<int>(cache.oversampling->load());
+    currentLookaheadMs = cache.lookahead->load();
     int osFactor = (currentOversamplingState == 0) ? 1 : ((currentOversamplingState == 1) ? 2 : 4);
 
     if (currentOversamplingState > 0) {
@@ -199,22 +320,37 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         binGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
         tameGainsWorkspaces[ch].assign(static_cast<size_t>(numBins), 1.0f);
 
+        rawMagsWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wLowArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wMidArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        wHighArrWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        smoothAlphasWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+        envWorkspaces[ch].assign(static_cast<size_t>(numBins), 0.0f);
+
+        // ⚡ コールバックの登録 (processBlockから呼ばれる)
         spectralEngines[ch].setProcessingCallback([this, ch, numBins, hopSize](float* magnitudes, int nBins)
             {
                 auto& hpss = hpssEngines[ch];
                 auto& onset = onsetDetectors[ch];
                 auto& masking = maskingModels[ch];
+
+                // ⚡ DSP Safety: ローカルの std::vector 確保を廃止し、事前確保済みのポインタを使用
                 float* power = powerWorkspaces[ch].data();
                 float* tonalMask = tonalMaskWorkspaces[ch].data();
                 float* binGains = binGainsWorkspaces[ch].data();
                 float* binTameGains = tameGainsWorkspaces[ch].data();
 
-                float normFactor = 2.0f / static_cast<float>(mFftSize);
-                std::vector<float> rawMags(nBins, 0.0f);
-                for (int i = 0; i < nBins; ++i) {
-                    rawMags[i] = magnitudes[i] * normFactor;
-                }
+                float* rawMags = rawMagsWorkspaces[ch].data();
+                float* wLowArr = wLowArrWorkspaces[ch].data();
+                float* wMidArr = wMidArrWorkspaces[ch].data();
+                float* wHighArr = wHighArrWorkspaces[ch].data();
+                float* smoothAlphas = smoothAlphasWorkspaces[ch].data();
+                float* env = envWorkspaces[ch].data();
 
+                float normFactor = 2.0f / static_cast<float>(mFftSize);
+
+                // ⚡ SIMD 乗算による高速化
+                juce::FloatVectorOperations::multiply(rawMags, magnitudes, normFactor, nBins);
                 juce::FloatVectorOperations::multiply(power, magnitudes, 1.0f / static_cast<float>(mFftSize), nBins);
                 juce::FloatVectorOperations::multiply(power, power, magnitudes, nBins);
                 juce::FloatVectorOperations::multiply(power, power, 1.0f / static_cast<float>(mFftSize), nBins);
@@ -245,7 +381,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
                     if (isSide) {
                         if (isLinked) {
-                            // ⚡ 修正: Link ON時は、LinkAmtに応じてMid/Sideのパラメータをブレンドする
                             auto interpolate = [linkAmt](float midVal, float sideVal) { return sideVal * (1.0f - linkAmt) + midVal * linkAmt; };
                             bands[b].tameM = interpolate(cache.bands[b].tame->load(), cache.bands[b].tameS->load());
                             bands[b].threshold = interpolate(cache.bands[b].threshM->load(), cache.bands[b].threshS->load());
@@ -256,7 +391,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                             bands[b].release = interpolate(cache.bands[b].releaseM->load(), cache.bands[b].releaseS->load());
                         }
                         else {
-                            // ⚡ 修正: Link OFF時は、一切のブレンドを排除し、Sideの値を完全に独立して使用する
                             bands[b].tameM = cache.bands[b].tameS->load();
                             bands[b].threshold = cache.bands[b].threshS->load();
                             bands[b].depth = cache.bands[b].depthS->load();
@@ -267,7 +401,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         }
                     }
                     else {
-                        // Mid チャンネル (または Stereoモード) は常にMidのパラメータを使用
                         bands[b].tameM = cache.bands[b].tame->load();
                         bands[b].threshold = cache.bands[b].threshM->load();
                         bands[b].depth = cache.bands[b].depthM->load();
@@ -284,11 +417,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                     if (bands[b].isSolo) anySolo = true;
                     tameSharp[b] = cache.bands[b].tameSharp->load();
                 }
-
-                std::vector<float> wLowArr(nBins, 0.0f);
-                std::vector<float> wMidArr(nBins, 0.0f);
-                std::vector<float> wHighArr(nBins, 0.0f);
-                std::vector<float> smoothAlphas(nBins, 0.0f);
 
                 const float bFreq = static_cast<float>(this->mSampleRate) / static_cast<float>(mFftSize);
                 const float transRatio = 1.414f;
@@ -328,7 +456,6 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
                         (cache.bands[2].tameSpeed->load() * wHigh);
                 }
 
-                std::vector<float> env(static_cast<size_t>(nBins), 0.0f);
                 env[0] = rawMags[0];
                 for (int i = 1; i < nBins; ++i) {
                     env[i] = env[i - 1] * smoothAlphas[i] + rawMags[i] * (1.0f - smoothAlphas[i]);
@@ -463,9 +590,7 @@ void LUMINAProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
 
     int fftLatency = mFftSize;
-    float currentLookaheadMs = cache.lookahead->load();
     int laLatency = static_cast<int>(currentLookaheadMs * mSampleRate / 1000.0f);
-
     int totalInternalSamples = fftLatency + laLatency;
     int reportedLatency = totalInternalSamples / osFactor;
     if (oversampler != nullptr)
@@ -504,11 +629,19 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
+    // ⚡ Rebuild保護: メッセージスレッドが再構築中であれば無音を出力しクラッシュを回避
+    const juce::SpinLock::ScopedTryLockType lock(processLock);
+    if (!lock.isLocked()) {
+        buffer.clear();
+        return;
+    }
+
     float inGain = juce::Decibels::decibelsToGain(cache.masterInGain->load());
     buffer.applyGain(inGain);
 
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> osBlock = block;
+
     if (oversampler != nullptr) {
         osBlock = oversampler->processSamplesUp(block);
     }
@@ -537,12 +670,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     juce::AudioBuffer<float> processingBuffer(channelData, numChannels, osNumSamples);
 
-    if (!isMsMode) {
-        msEncoder.encodeMidSide(processingBuffer);
-    }
-    else {
-        msEncoder.encodeMidSide(processingBuffer);
-    }
+    msEncoder.encodeMidSide(processingBuffer);
 
     float lookaheadMs = cache.lookahead->load();
     int delaySamples = static_cast<int>(lookaheadMs * mSampleRate / 1000.0f);
@@ -584,6 +712,7 @@ void LUMINAProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
 
     float alTimeSetting = cache.autoLevelTimePro->load();
     float timeSecAL = (alTimeSetting == 0.0f) ? 3.0f : (alTimeSetting == 1.0f ? 10.0f : (alTimeSetting == 2.0f ? 30.0f : 300.0f));
+    juce::ignoreUnused(timeSecAL);
 
     analyzerCore.setAutoLevelActive(cache.autoLevel->load() > 0.5f);
     analyzerCore.processAudioBlock(inputCopyBuffer.getArrayOfReadPointers(),

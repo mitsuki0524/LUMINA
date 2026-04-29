@@ -1,3 +1,6 @@
+// ==========================================
+// Source/PluginProcessor.h
+// ==========================================
 #ifndef LUMINA_PLUGINPROCESSOR_H
 #define LUMINA_PLUGINPROCESSOR_H
 
@@ -7,6 +10,7 @@
 #include <vector>
 #include <array>
 #include <memory>
+#include <atomic>
 
 #include "DSP/SpectralEngine.h"
 #include "DSP/HPSSEngine.h"
@@ -121,11 +125,7 @@ public:
 
         for (int i = 0; i < msBuffer.getNumSamples(); ++i)
         {
-            // ==========================================================
-            // 1. 帯域分割と位相補償 (サブトラクション完全再構成)
-            // ==========================================================
-
-            // --- Mid チャンネル ---
+            // --- Mid の分割と位相補償 ---
             float m_low_pre = m_lp1.processSample(0, M[i]);
             float m_ap1_out = m_ap1.processSample(0, M[i]);
             float m_rest = m_ap1_out - m_low_pre;
@@ -134,7 +134,7 @@ public:
             float m_hi = m_ap2_out - m_mi;
             float m_lo = m_ap2_low.processSample(0, m_low_pre);
 
-            // --- Side チャンネル ---
+            // --- Side の分割と位相補償 ---
             float s_low_pre = s_lp1.processSample(0, S[i]);
             float s_ap1_out = s_ap1.processSample(0, S[i]);
             float s_rest = s_ap1_out - s_low_pre;
@@ -143,43 +143,22 @@ public:
             float s_hi = s_ap2_out - s_mi;
             float s_lo = s_ap2_low.processSample(0, s_low_pre);
 
-
-            // ==========================================================
-            // 2. 帯域別 Width コントロール (アルゴリズム適用)
-            // ==========================================================
-
-            // 【低域 (Low)】: モノラル化の徹底
-            // Mid成分は一切触らないため、キックやベースの音量・パンチは100%維持されます。
-            // wLow = 0.0 で安全かつ完璧に低域がセンターに定まります。
+            // Width コントロール
             s_lo *= wLow;
-
-            // 【中域 (Mid)】: ゲイン比率制御による自然な拡張
-            // ボーカルやスネアの芯（Mid）を保護しつつ、Side成分のみをスケールします。
-            // 複雑な位相操作を行わないため、モノラル再生時の音痩せ（位相キャンセル）が起きません。
             s_mi *= wMid;
 
-            // 【高域 (High)】: シュレーダー・デコリレーション（位相分散）
-            // 常にデコリレーターに信号を通し、内部状態(State)を更新し続ける（ノイズ防止）
             float s_hi_decorr = decorrelator.processSample(s_hi);
 
             if (wHigh > 1.0f)
             {
-                // wHigh が 1.0 ～ 2.0 の間：
-                // 元のSideと「位相を複雑に散らしたSide」をクロスフェードし、
-                // スピーカーの外側から音が包み込むような立体感（広がり）を作ります。
                 float blend = juce::jlimit(0.0f, 1.0f, wHigh - 1.0f);
                 s_hi = s_hi * (1.0f - blend) + s_hi_decorr * blend;
             }
             else
             {
-                // wHigh が 1.0 以下の時：
-                // 位相分散は行わず、単純にSide成分の音量を下げてモノラル方向へ引き締めます。
                 s_hi *= wHigh;
             }
 
-            // ==========================================================
-            // 3. 再合算
-            // ==========================================================
             M[i] = m_lo + m_mi + m_hi;
             S[i] = s_lo + s_mi + s_hi;
         }
@@ -191,7 +170,10 @@ private:
     AllPassDecorrelator decorrelator;
 };
 
-class LUMINAProcessor : public juce::AudioProcessor
+// ⚡ リスナーとAsyncUpdaterを継承し、安全なRebuildアーキテクチャを構築
+class LUMINAProcessor : public juce::AudioProcessor,
+    public juce::AudioProcessorValueTreeState::Listener,
+    public juce::AsyncUpdater
 {
 public:
     LUMINAProcessor();
@@ -220,6 +202,12 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // ⚡ パラメータ変更の検知
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+
+    // ⚡ 非同期でのエンジン再構築
+    void handleAsyncUpdate() override;
+
     juce::AudioProcessorValueTreeState apvts;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -235,28 +223,39 @@ private:
     std::array<MaskingModel, 2>   maskingModels;
     std::array<OnsetDetector, 2>  onsetDetectors;
 
+    // ⚡ DSP Safety: ラムダ式内での動的メモリ確保を排除するためのワークスペース
     std::array<std::vector<float>, 2> powerWorkspaces;
     std::array<std::vector<float>, 2> tonalMaskWorkspaces;
     std::array<std::vector<float>, 2> binGainsWorkspaces;
     std::array<std::vector<float>, 2> tameGainsWorkspaces;
 
+    std::array<std::vector<float>, 2> rawMagsWorkspaces;
+    std::array<std::vector<float>, 2> wLowArrWorkspaces;
+    std::array<std::vector<float>, 2> wMidArrWorkspaces;
+    std::array<std::vector<float>, 2> wHighArrWorkspaces;
+    std::array<std::vector<float>, 2> smoothAlphasWorkspaces;
+    std::array<std::vector<float>, 2> envWorkspaces;
+
     juce::AudioBuffer<float> inputCopyBuffer;
     juce::AudioBuffer<float> dryDelayBuffer;
     int delayWritePosition = 0;
 
-    // ⚡ Lookahead リングバッファ
     juce::AudioBuffer<float> lookaheadBuffer;
     int lookaheadWritePos = 0;
 
-    // ⚡ Oversampling モジュール
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     int currentOversamplingState = 0;
+    float currentLookaheadMs = 0.0f;
 
     std::array<std::array<float, 24>, 2> dynEnvelopes{};
     std::vector<int> binToBarkMap;
 
     double mSampleRate = 44100.0;
+    int mSamplesPerBlock = 512; // Rebuild用に保持
     int mFftSize = 4096;
+
+    // ⚡ オーディオスレッドとメッセージスレッドの競合を防ぐロック
+    juce::SpinLock processLock;
 
     struct ParamCache {
         std::atomic<float>* proMode = nullptr;

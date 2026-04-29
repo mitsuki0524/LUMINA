@@ -1,3 +1,6 @@
+// ==========================================
+// Source/DSP/MSEncoder.cpp
+// ==========================================
 #include "MSEncoder.h"
 
 void MSEncoder::encodeMidSide(juce::AudioBuffer<float>& buffer)
@@ -9,6 +12,7 @@ void MSEncoder::encodeMidSide(juce::AudioBuffer<float>& buffer)
     int numSamples = buffer.getNumSamples();
 
     // 生ポインタで高速に M/S 変換: M = (L+R)*0.5, S = (L-R)*0.5
+    // （コンパイラの自動AVX2/SIMDベクタライゼーションが最も効果的に働く形態です）
     for (int i = 0; i < numSamples; ++i) {
         float l = left[i];
         float r = right[i];
