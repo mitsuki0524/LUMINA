@@ -3,6 +3,7 @@
 // ==========================================
 #include "SpectrumAnalyzer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 
 SpectrumAnalyzer::SpectrumAnalyzer(juce::AudioProcessorValueTreeState& vts)
     : apvts(vts), cross1(250.0f), cross2(4000.0f)
@@ -111,7 +112,6 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
 
     const float minDB = -72.0f;
     const float maxDB = 0.0f;
-    const float silenceThreshold = 0.00001f;
 
     // --- 背景グリッド描画 ---
     g.setColour(juce::Colours::white.withAlpha(0.05f));
@@ -128,118 +128,148 @@ void SpectrumAnalyzer::paint(juce::Graphics& g)
     g.drawVerticalLine(static_cast<int>(x1), 0.0f, bounds.getHeight());
     g.drawVerticalLine(static_cast<int>(x2), 0.0f, bounds.getHeight());
 
-    // --- データ再マッピング (ピクセルごとに正確な周波数を抽出) ---
-    // 画面の各ピクセルにおける値を格納する一時配列
-    const int numPixels = getWidth();
+    // --- データ再マッピング ---
+    // ⚡ 動的メモリ確保(std::vector)を排除し、固定長バッファ(std::array)を使用
+    constexpr int MAX_PIXELS = 4096;
+    int numPixels = std::min(static_cast<int>(bounds.getWidth()), MAX_PIXELS);
     if (numPixels <= 0) return;
 
-    std::vector<float> preData(numPixels), postData(numPixels), tameData(numPixels);
-    const float nyquist = 22050.0f; // DSP側の最大周波数
+    std::array<float, MAX_PIXELS> preData = { 0 };
+    std::array<float, MAX_PIXELS> postData = { 0 };
+    std::array<float, MAX_PIXELS> tameData = { 1.0f };
+    const float nyquist = 22050.0f;
 
+    // ⚡ Solo時のGUI側での強制ゼロ化（壁）を完全撤去
+    // これにより、DSPから送られてきたリアルなクロスフェード波形をそのまま描画します。
     for (int x = 0; x < numPixels; ++x) {
-        float freq = getFreqFromX((float)x, (float)numPixels);
+        float freq = getFreqFromX(static_cast<float>(x), static_cast<float>(numPixels));
         float linearIdx = (freq / nyquist) * 511.0f;
-        int idx = (int)linearIdx;
-        float frac = linearIdx - (float)idx;
+        int idx = static_cast<int>(linearIdx);
+        float frac = linearIdx - static_cast<float>(idx);
 
         if (idx >= 0 && idx < 511) {
             preData[x] = currentFrame.unprocessedSpectrum[idx] * (1.0f - frac) + currentFrame.unprocessedSpectrum[idx + 1] * frac;
-            postData[x] = currentFrame.magnitudeSpectrum[idx] * (1.0f - frac) + currentFrame.magnitudeSpectrum[idx + 1] * frac;
             tameData[x] = currentFrame.tameSpectrum[idx] * (1.0f - frac) + currentFrame.tameSpectrum[idx + 1] * frac;
+            postData[x] = currentFrame.magnitudeSpectrum[idx] * (1.0f - frac) + currentFrame.magnitudeSpectrum[idx + 1] * frac;
         }
         else {
             preData[x] = 0.0f; postData[x] = 0.0f; tameData[x] = 1.0f;
         }
     }
 
-    // --- 賢い平滑化 (無音境界でのスロープ発生を防止) ---
-    auto smoothedPre = preData;
-    auto smoothedPost = postData;
+    // --- 均等な平滑化 ---
+    std::array<float, MAX_PIXELS> smoothedPre = preData;
+    std::array<float, MAX_PIXELS> smoothedPost = postData;
     for (int pass = 0; pass < 2; ++pass) {
-        auto tempPre = smoothedPre;
-        auto tempPost = smoothedPost;
+        std::array<float, MAX_PIXELS> tempPre = smoothedPre;
+        std::array<float, MAX_PIXELS> tempPost = smoothedPost;
         for (int i = 1; i < numPixels - 1; ++i) {
-            if (tempPre[i] > silenceThreshold && tempPre[i - 1] > silenceThreshold && tempPre[i + 1] > silenceThreshold)
-                smoothedPre[i] = (tempPre[i - 1] + tempPre[i] * 2.0f + tempPre[i + 1]) / 4.0f;
-            if (tempPost[i] > silenceThreshold && tempPost[i - 1] > silenceThreshold && tempPost[i + 1] > silenceThreshold)
-                smoothedPost[i] = (tempPost[i - 1] + tempPost[i] * 2.0f + tempPost[i + 1]) / 4.0f;
+            smoothedPre[i] = (tempPre[i - 1] + tempPre[i] * 2.0f + tempPre[i + 1]) / 4.0f;
+            smoothedPost[i] = (tempPost[i - 1] + tempPost[i] * 2.0f + tempPost[i + 1]) / 4.0f;
         }
     }
 
-    // --- Y座標計算ラムダ (チルト補正込) ---
+    // --- 連続的なY座標計算 ---
     auto calcY = [&](float mag, float x) -> float {
-        if (mag <= silenceThreshold) return bounds.getHeight();
         float freq = getFreqFromX(x, bounds.getWidth());
-        float db = juce::Decibels::gainToDecibels(mag, minDB);
-        float tilt = 3.0f * std::log2(std::max(20.0f, freq) / 1000.0f);
-        db = juce::jlimit(minDB, maxDB, db + tilt);
+        float tiltDB = 3.0f * std::log2(std::max(20.0f, freq) / 1000.0f);
+        // 無音時(-120dB)でも不連続なジャンプを起こさせない
+        float db = juce::Decibels::gainToDecibels(mag, -120.0f) + tiltDB;
+        db = juce::jlimit(minDB, maxDB, db);
         return juce::jmap(db, minDB, maxDB, bounds.getHeight(), 0.0f);
         };
 
-    // --- カラー定義 ---
+    // --- パスの生成 ---
+    juce::Path prePath, tamePath, postPath, postOutline;
+
+    for (int x = 0; x < numPixels; ++x) {
+        float yPre = calcY(smoothedPre[x], static_cast<float>(x));
+        float yPost = calcY(smoothedPost[x], static_cast<float>(x));
+
+        if (x == 0) {
+            prePath.startNewSubPath(0.0f, yPre);
+            postOutline.startNewSubPath(0.0f, yPost);
+        }
+        else {
+            prePath.lineTo(static_cast<float>(x), yPre);
+            postOutline.lineTo(static_cast<float>(x), yPost);
+        }
+    }
+
+    // Tame用ポリゴン (上からPre、下からTame適用後のPostで閉じる)
+    tamePath.startNewSubPath(0.0f, bounds.getHeight());
+    for (int x = 0; x < numPixels; ++x) tamePath.lineTo(static_cast<float>(x), calcY(smoothedPre[x], static_cast<float>(x)));
+    for (int x = numPixels - 1; x >= 0; --x) tamePath.lineTo(static_cast<float>(x), calcY(smoothedPre[x] * tameData[x], static_cast<float>(x)));
+    tamePath.closeSubPath();
+
+    // Post用ポリゴン (底面と波形で閉じる)
+    postPath.startNewSubPath(0.0f, bounds.getHeight());
+    for (int x = 0; x < numPixels; ++x) postPath.lineTo(static_cast<float>(x), calcY(smoothedPost[x], static_cast<float>(x)));
+    postPath.lineTo(static_cast<float>(numPixels - 1), bounds.getHeight());
+    postPath.closeSubPath();
+
+    // --- DSP同期の水平グラデーション構築 ---
     juce::Colour cLow = juce::Colour::fromString("FFFF8C00");
     juce::Colour cMid = juce::Colour::fromString("FF764DFF");
     juce::Colour cHigh = juce::Colour::fromString("FF00E5FF");
+    const float transRatio = 1.414f; // DSPのクロスフェード比率と完全一致させる
+
+    auto makeHorizontalGradient = [&](float alpha) -> juce::ColourGradient {
+        juce::ColourGradient grad;
+        grad.point1 = { 0.0f, 0.0f };
+        grad.point2 = { bounds.getWidth(), 0.0f };
+
+        // Crossover 1 (Low -> Mid) の遷移帯域を計算
+        float nx1_l = juce::jlimit(0.0f, 1.0f, getXFromFreq(cross1 / transRatio, bounds.getWidth()) / bounds.getWidth());
+        float nx1_u = juce::jlimit(0.0f, 1.0f, getXFromFreq(cross1 * transRatio, bounds.getWidth()) / bounds.getWidth());
+        // Crossover 2 (Mid -> High) の遷移帯域を計算
+        float nx2_l = juce::jlimit(0.0f, 1.0f, getXFromFreq(cross2 / transRatio, bounds.getWidth()) / bounds.getWidth());
+        float nx2_u = juce::jlimit(0.0f, 1.0f, getXFromFreq(cross2 * transRatio, bounds.getWidth()) / bounds.getWidth());
+
+        // JUCEのColourGradientのポイント追加は昇順である必要があるための安全処理
+        nx1_u = std::max(nx1_l + 0.001f, nx1_u);
+        nx2_l = std::max(nx1_u + 0.001f, nx2_l);
+        nx2_u = std::max(nx2_l + 0.001f, nx2_u);
+
+        grad.addColour(0.0f, cLow.withAlpha(alpha));
+        if (nx1_l > 0.0f) grad.addColour(nx1_l, cLow.withAlpha(alpha));
+        if (nx1_u < 1.0f) grad.addColour(nx1_u, cMid.withAlpha(alpha));
+        if (nx2_l < 1.0f) grad.addColour(nx2_l, cMid.withAlpha(alpha));
+        if (nx2_u < 1.0f) grad.addColour(nx2_u, cHigh.withAlpha(alpha));
+        grad.addColour(1.0f, cHigh.withAlpha(alpha));
+
+        return grad;
+        };
 
     // ==========================================
-    // 1. Pre (未処理) 波形の輪郭線
+    // 描画実行
     // ==========================================
-    juce::Path prePath;
-    for (int x = 0; x < numPixels; ++x) {
-        float y = calcY(smoothedPre[x], (float)x);
-        if (x == 0) prePath.startNewSubPath((float)x, y); else prePath.lineTo((float)x, y);
-    }
+
+    // 1. Pre (未処理) 波形の輪郭線
     g.setColour(juce::Colours::white.withAlpha(0.1f));
     g.strokePath(prePath, juce::PathStrokeType(1.0f));
 
-    // ==========================================
-    // 2. 帯域ごとの塗りつぶし (Tame & Post)
-    // ==========================================
-    auto drawBand = [&](float xStart, float xEnd, juce::Colour col) {
-        if (xStart >= xEnd) return;
+    // 2. Tame (抑制部分) の塗りつぶし
+    g.setGradientFill(makeHorizontalGradient(0.2f));
+    g.fillPath(tamePath);
 
-        // --- 抑制部分 (Tame) の塗りつぶし ---
-        juce::Path tPath;
-        tPath.startNewSubPath(xStart, bounds.getHeight());
-        for (int x = (int)xStart; x <= (int)xEnd; ++x) {
-            tPath.lineTo((float)x, calcY(smoothedPre[x], (float)x));
-        }
-        for (int x = (int)xEnd; x >= (int)xStart; --x) {
-            tPath.lineTo((float)x, calcY(smoothedPre[x] * tameData[x], (float)x));
-        }
-        tPath.closeSubPath();
-        g.setColour(col.withAlpha(0.2f));
-        g.fillPath(tPath);
+    // 3. Post (処理後) の塗りつぶし + 縦グラデーション(Clip処理による合成)
+    g.saveState();
+    g.reduceClipRegion(postPath);
 
-        // --- 処理後 (Post) の塗りつぶし + 縦グラデーション ---
-        juce::Path pPath;
-        pPath.startNewSubPath(xStart, bounds.getHeight());
-        for (int x = (int)xStart; x <= (int)xEnd; ++x) {
-            pPath.lineTo((float)x, calcY(smoothedPost[x], (float)x));
-        }
-        pPath.lineTo(xEnd, bounds.getHeight());
-        pPath.closeSubPath();
+    // 3-a: 水平方向のDSP同期カラーブレンド
+    g.setGradientFill(makeHorizontalGradient(0.7f));
+    g.fillAll();
 
-        // 音量が大きいほど明るくなる縦グラデーション
-        juce::ColourGradient grad(col.withAlpha(0.7f), 0, 0, col.withAlpha(0.0f), 0, bounds.getHeight(), false);
-        g.setGradientFill(grad);
-        g.fillPath(pPath);
-        };
+    // 3-b: 縦方向の発光・透明感フェード (背景色へ溶け込む)
+    juce::ColourGradient vFade(juce::Colours::transparentBlack, 0.0f, 0.0f, bgColor, 0.0f, bounds.getHeight(), false);
+    g.setGradientFill(vFade);
+    g.fillAll();
+    g.restoreState();
 
-    drawBand(0.0f, x1, cLow);
-    drawBand(x1, x2, cMid);
-    drawBand(x2, bounds.getWidth(), cHigh);
-
-    // ==========================================
-    // 3. 最前面の Post 波形輪郭線 (発光)
-    // ==========================================
-    juce::Path postPath;
-    for (int x = 0; x < numPixels; ++x) {
-        float y = calcY(smoothedPost[x], (float)x);
-        if (x == 0) postPath.startNewSubPath((float)x, y); else postPath.lineTo((float)x, y);
-    }
+    // 4. 最前面の Post 波形輪郭線 (発光)
     g.setColour(juce::Colours::white.withAlpha(0.4f));
-    g.strokePath(postPath, juce::PathStrokeType(1.5f));
+    g.strokePath(postOutline, juce::PathStrokeType(1.5f));
 }
 
 void SpectrumAnalyzer::resized() {}
