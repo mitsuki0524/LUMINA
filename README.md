@@ -7,7 +7,7 @@
 ![Downloads](https://img.shields.io/github/downloads/OTODESK4193/NEOTO_Pre/total.svg)
 
 ##
-<img src="Source/Assets/Screenshot.jpg" width="600">
+<img src="Source/Assets/Screenshot1.jpg" width="600">
 
 ## Overview
 
@@ -36,6 +36,8 @@ Deep control over the time and frequency domains:
 * **Intelligent Auto-Band:** Automatically analyzes input signals over a specified duration to set optimal crossover frequencies based on spectral valleys.
 * **M/S Width & Decorrelation:** Independent Mid/Side processing with Schroeder All-Pass decorrelators and TPT Linkwitz-Riley crossovers ensuring absolute phase coherence and no latency accumulation.
 * **Pro Mode Operations:** Advanced controls over HPSS Blur/Res, band-linking, and independent M/S attack/release times.
+##
+<img src="Source/Assets/Screenshot1.jpg" width="600">
 
 ### 🔬 Advanced DSP Engine & Architecture
 
@@ -99,5 +101,5 @@ This project is completely free and open-source. It is distributed under the **G
 
 ## 📞 Support
 
-* **Social**: [@kijyoumusic]()
+* **Social**: [@kijyoumusic](https://x.com/kijyoumusic)
 
