@@ -1,6 +1,3 @@
-
----
-
 # LUMINA
 
 ## Overview
