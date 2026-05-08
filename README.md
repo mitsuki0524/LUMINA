@@ -60,7 +60,7 @@ Deep control over the time and frequency domains:
 
 ## Installation
 
-1. Download the latest `Lumina.vst3` file from the [[Releases](https://github.com/OTODESK4193/NEOTO_Pre/releases/latest) page.
+1. Download the latest `Lumina.vst3` file from the [[Releases](https://github.com/OTODESK4193/LUMINA/releases/latest)] page.
 2. Move the `.vst3` file to your default VST3 plugin directory:
 `C:\Program Files\Common Files\VST3`
 3. Rescan your plugins in your DAW (e.g., Ableton Live).
