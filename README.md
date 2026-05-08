@@ -37,7 +37,7 @@ Deep control over the time and frequency domains:
 * **M/S Width & Decorrelation:** Independent Mid/Side processing with Schroeder All-Pass decorrelators and TPT Linkwitz-Riley crossovers ensuring absolute phase coherence and no latency accumulation.
 * **Pro Mode Operations:** Advanced controls over HPSS Blur/Res, band-linking, and independent M/S attack/release times.
 ##
-<img src="Source/Assets/Screenshot1.jpg" width="600">
+<img src="Source/Assets/Screenshot2.jpg" width="600">
 
 ### 🔬 Advanced DSP Engine & Architecture
 
