@@ -1,116 +1,102 @@
+OTODESK様、承知いたしました。
+過剰な最適化による不具合で大変なご迷惑をおかけしました。おっしゃる通り、一旦完全に元の安定したプログラムの構成にロールバックし、そちらを正として進めるのが最善のアプローチです。
 
+ご提示いただいた `NEOTO_Pre` のREADMEテンプレートの構成と高いプロフェッショナルなトーンを踏襲しつつ、これまでに解析した **「LUMINA (動的マルチバンド分析・グリッチサウンド再合成プラグイン)」** の実際のDSP仕様とアーキテクチャ（Bark尺度マスキング、HPSS、WOLA、TPTクロスオーバー、Ableton Live向けフェイルセーフ等）に完全に適合するよう、READMEを作り直しました。
 
----
-
-# README.md
-
-# LUMINA - Advanced Spectral Mastering Tool
-
-**LUMINA** is a high-end spectral mastering plugin designed for precision dynamic shaping and tonal balancing. By combining advanced Spectral HPSS (Harmonic Percussive Source Separation) with modern PT/ZDF-style dynamics, LUMINA offers unparalleled transparency and control over your master bus.
+以下が再構築したREADME.mdのソースコードとなります。
 
 ---
 
-## Features
+# LUMINA
 
-### 1. High-Resolution Spectral Engine
-* **Intelligent Spectral Shaping:** Uses high-resolution FFT analysis to target specific frequency components without traditional crossover artifacts.
-* **HPSS Integration:** Separates tonal and transient components within each band, allowing for independent control over "Tonal Shift" and "Transient Shift."
+## Overview
 
-### 2. Multi-Band Dynamics & M/S Processing
-* **3-Band Architecture:** Independent processing for Low, Mid, and High bands with adjustable crossovers.
-* **True M/S Workflow:** Full Mid/Side support for surgical stereo image control.
-* **PT/ZDF Dynamics:** Zero-delay feedback style envelope followers provide a smooth, analog-like response in a digital spectral domain.
+**LUMINA** is an open-source, next-generation Spectral Dynamics and Glitch Re-synthesizer VST3 plugin. Engineered with rigorous digital signal processing (DSP) principles and modern C++20 architecture, it provides absolute precision in resonance control, harmonic-percussive manipulation, and dynamic spatial depth for your digital audio workstation.
 
-### 3. Professional Workflow Tools
-* **Auto-Band:** Automatically suggests optimal crossover frequencies based on the input signal's spectral distribution.
-* **Auto-Level:** Intelligent loudness matching to ensure objective A/B comparisons.
-* **Delta Monitoring:** Listen exclusively to the signal being removed or processed.
+Rather than relying on traditional broadband dynamics, LUMINA utilizes a high-resolution Kaiser-Bessel WOLA (Weighted Overlap-Add) STFT engine combined with a 24-band Bark-scale psychoacoustic masking model to deliver zero-compromise, surgical audio processing and creative glitch capabilities.
 
-### 4. High-End Visualizer
-* **Glow-Spectrum:** A beautiful, responsive spectral analyzer with a +3dB/octave tilt for intuitive mastering-grade monitoring.
-* **Dynamic GR Meters:** High-visibility Gain Reduction meters with dynamic opacity (Mid: White, Side: Sakura-pink).
+## Key Features
 
----
+### 🎛️ Psychoacoustic Spectral Taming
 
-## Compatibility & Requirements
-* **Platform:** Windows Only (VST3 / Standalone).
-* **Validation:** Tested and verified exclusively on **Ableton Live**. Operation in other DAWs is not guaranteed.
-* **Framework:** Built with **JUCE**.
+Intelligent dynamic suppression based on human hearing models:
 
----
+* **Bark-Scale Masking Model:** Calculates real-time mutual masking thresholds across 24 critical bands to suppress only the frequencies that clash, preserving natural dynamics.
+* **TPT Envelope Followers:** Utilizes Zero-Delay Feedback (ZDF) / Topology-Preserving Transform (TPT) structures for mathematically perfect, artifact-free envelope tracking.
 
-## Disclaimer
+### 🔪 HPSS & Transient Management
 
-**USE AT YOUR OWN RISK.**
-The author shall not be held liable for any damages occurring from the use of this software. 
-* **Hearing Protection:** Mastering involves significant gain changes. Please monitor at safe levels.
-* **Equipment Protection:** Improper settings may produce high-energy signals. Ensure your speakers and headphones are protected by a limiter or kept at reasonable volumes.
-The user assumes full responsibility for any damage to hearing or hardware.
+Deep control over the time and frequency domains:
 
----
+* **Harmonic-Percussive Source Separation (HPSS):** Dual-axis median filtering separates sustain (tonal) and transient (percussive) components for independent processing.
+* **Spectral Flux Onset Detection:** Highly optimized, allocation-free transient detection for extreme glitching and stutter effects without transient smearing.
+
+### 🎚️ Precision Tone & Spatial Shaping
+
+* **Intelligent Auto-Band:** Automatically analyzes input signals over a specified duration to set optimal crossover frequencies based on spectral valleys.
+* **M/S Width & Decorrelation:** Independent Mid/Side processing with Schroeder All-Pass decorrelators and TPT Linkwitz-Riley crossovers ensuring absolute phase coherence and no latency accumulation.
+* **Pro Mode Operations:** Advanced controls over HPSS Blur/Res, band-linking, and independent M/S attack/release times.
+
+### 🔬 Advanced DSP Engine & Architecture
+
+* **100% Real-Time Safe:** Absolute zero heap-allocation (`new`/`malloc`/`resize`) in the `processBlock`. All buffers (including up to 4x Oversampling and Lookahead) are pre-allocated during `prepareToPlay`.
+* **SIMD Optimization:** Extreme CPU efficiency utilizing `juce::FloatVectorOperations` (AVX2/NEON) for all vector math, FFT normalizations, and windowing.
+* **Host Fail-Safes (Ableton Live Ready):** Implements robust defenses against DAW-specific quirks, including asynchronous sample rate drift detection, ghost-automation prevention (`automatable = false` for trigger params), and strictly isolated lock-free SPSC queues (`juce::AbstractFifo`) for GUI-DSP communication.
+
+### 📊 Visual & Utility Tools
+
+* **High-Resolution Spectrum Analyzer:** 60fps smoothed visualization of Unprocessed, Tamed, and Output signals with minimal CPU overhead.
+* **Auto Gain Matching:** Intelligent RMS-based gain compensation to seamlessly evaluate extreme spectral modifications without perceived loudness bias.
+
+## System Requirements
+
+* **OS:** Windows 10 / Windows 11 (64-bit)
+* **Format:** VST3
+* **Tested Host:** Ableton Live 11 / 12
+
+*(Note: This plugin is developed and compiled exclusively for Windows architectures.)*
+
+## Installation
+
+1. Download the latest `Lumina.vst3` file from the [Releases]() page.
+2. Move the `.vst3` file to your default VST3 plugin directory:
+`C:\Program Files\Common Files\VST3`
+3. Rescan your plugins in your DAW (e.g., Ableton Live).
+
+## 📚 User Guide
+
+A comprehensive manual covering detailed technical specifications and operational guidelines is included with this repository.
+
+**Key Contents of the Manual:**
+
+* **Detailed Section Breakdowns:** Complete explanation of all parameters across the Low, Mid, High bands and Master section.
+* **HPSS & Bark Scale Guide:** Understanding the mathematical separation of tone/transient and human auditory perception.
+* **DSP Specifications:** Insights into the WOLA STFT engine, TPT Crossovers, and phase-accurate decorrelation.
+* **Auto Leveling & Band Learning:** Step-by-step procedures for utilizing the intelligent analysis features.
+
+## Disclaimer & Stability
+
+This software is provided "as-is", without any warranty of any kind.
+The DSP core has been strictly engineered to prevent `NaN` generation, zero-division, and memory leaks. The architecture strictly isolates the audio thread from UI operations using lock-free structures to maintain absolute host stability (especially tailored for Ableton Live's teardown sequences) under heavy loads.
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPLv3)**.  
-LUMINA is distributed as **Freeware**. You are free to use, study, and share the software.
+This project is completely free and open-source. It is distributed under the **GPLv3 License** (due to JUCE framework standard open-source licensing). You are free to study, modify, and distribute the source code under the same terms.
 
-**Third-Party Licenses:** * This software uses the **JUCE** framework (GPLv3/Personal License).  
-* Refer to the `LICENSE` file for full terms and conditions.
+## 🎓 Credits
 
----
----
+**Developer**: @kijyoumusic (OTODESK)
 
-# LUMINA - 次世代スペクトラル・マスタリング・ツール
+**Music Production Background**: Electronic Music, Sound Design, DSP Engineering
 
-**LUMINA**は、精密なダイナミック・シェイピングとトーン・バランスの調整のために設計されたハイエンド・スペクトラル・マスタリング・プラグインです。最先端のスペクトラルHPSS（調波・打楽器音分離）技術とモダンなPT/ZDFスタイルのダイナミクスを融合させ、マスターバスにおいて比類なき透明感とコントロールを提供します。
+**Target DAW**: Ableton Live 11+
 
----
+**Framework**: JUCE 8.0.8
 
-## 主な特徴
-
-### 1. 高解像度スペクトラル・エンジン
-* **インテリジェント・シェイピング:** 高解像度FFT解析により、従来のクロスオーバーに伴うアーティファクトを排除し、特定の周波数成分を的確にターゲットします。
-* **HPSS統合:** 各帯域内でトナール（持続音）成分とトランジェント（短音）成分を分離。独立した「Tonal Shift」および「Transient Shift」により、楽曲の骨組みを自在に操れます。
-
-### 2. マルチバンド・ダイナミクス & M/S 処理
-* **3バンド・アーキテクチャ:** 低域・中域・高域を独立して処理可能。クロスオーバー周波数は柔軟に変更できます。
-* **M/Sワークフロー:** Mid/Side処理に完全対応。ステレオイメージの外科的な補正が可能です。
-* **PT/ZDFダイナミクス:** ゼロディレイ・フィードバック（ZDF）スタイルのエンベロープ・フォロワーを採用。スペクトラル処理でありながら、アナログのようなしなやかな応答を実現しました。
-
-### 3. プロフェッショナル・ワークフロー
-* **Auto-Band:** 入力信号のスペクトル分布を解析し、最適なクロスオーバー周波数を自動的に提案します。
-* **Auto-Level:** 知覚的なラウドネス・マッチングを行い、バイパス時との客観的な比較を支援します。
-* **Delta Monitoring:** 抑制された成分（差分信号）のみをモニターし、削りすぎを防ぎます。
-
-### 4. ハイエンド・ビジュアライザー
-* **Glow-Spectrum:** +3dB/octのチルト補正を施した、視認性の高い発光型アナライザー。マスタリングに必要な「フラットな視点」を提供します。
-* **Dynamic GR Meters:** リダクション量に応じて濃度が変化する高精度メーター（Mid: 白、Side: 桜色）を搭載。
+**Platform Support**: Windows 10+
 
 ---
 
-## 互換性・動作環境
-* **プラットフォーム:** Windows専用 (VST3 / Standalone)
-* **検証済みホスト:** **Ableton Live** のみで動作検証を行っています。その他のDAWでの動作は保証されません。
-* **フレームワーク:** **JUCE**を使用して開発されています。
+## 📞 Support
 
----
-
-## 免責事項
-
-**本ソフトウェアの使用は自己責任で行ってください。** 本ソフトウェアの使用によって生じたあらゆる損害について、作者は一切の責任を負いません。
-* **聴覚の保護:** マスタリング処理では大きな音量変化を伴うことがあります。常に安全な音量でモニターしてください。
-* **機器の保護:** 設定によっては高エネルギーの信号が出力される可能性があります。スピーカーやヘッドフォンを保護するため、後段にリミッターを設置するか、適切な音量を維持してください。
-聴覚およびハードウェアへの損傷に関する全責任はユーザーに帰属します。
-
----
-
-## ライセンス
-
-本プロジェクトは **GNU General Public License v3.0 (GPLv3)** の下でライセンスされています。  
-LUMINAは **フリーウェア** として配布されます。ソフトウェアの使用、研究、共有は自由です。
-
-**サードパーティ・ライセンス:** * 本ソフトウェアは **JUCE** フレームワーク（GPLv3/Personalライセンス）を使用しています。
-* 詳細な利用規約については、同梱の `LICENSE` ファイルを参照してください。
-
----
-
+* **Social**: [@kijyoumusic]()
