@@ -1,5 +1,14 @@
 # LUMINA
 
+![Release](https://img.shields.io/badge/release-v1.0-blue)
+![License](https://img.shields.io/badge/license-GPLv3-green)
+![JUCE](https://img.shields.io/badge/JUCE-8.0.8-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20-lightgrey)
+![Downloads](https://img.shields.io/github/downloads/OTODESK4193/NEOTO_Pre/total.svg)
+
+##
+<img src="Source/Assets/Screenshot.jpg" width="600">
+
 ## Overview
 
 **LUMINA** is an open-source, next-generation Spectral Dynamics and Glitch Re-synthesizer VST3 plugin. Engineered with rigorous digital signal processing (DSP) principles and modern C++20 architecture, it provides absolute precision in resonance control, harmonic-percussive manipulation, and dynamic spatial depth for your digital audio workstation.
