@@ -1,9 +1,3 @@
-OTODESK様、承知いたしました。
-過剰な最適化による不具合で大変なご迷惑をおかけしました。おっしゃる通り、一旦完全に元の安定したプログラムの構成にロールバックし、そちらを正として進めるのが最善のアプローチです。
-
-ご提示いただいた `NEOTO_Pre` のREADMEテンプレートの構成と高いプロフェッショナルなトーンを踏襲しつつ、これまでに解析した **「LUMINA (動的マルチバンド分析・グリッチサウンド再合成プラグイン)」** の実際のDSP仕様とアーキテクチャ（Bark尺度マスキング、HPSS、WOLA、TPTクロスオーバー、Ableton Live向けフェイルセーフ等）に完全に適合するよう、READMEを作り直しました。
-
-以下が再構築したREADME.mdのソースコードとなります。
 
 ---
 
@@ -100,3 +94,4 @@ This project is completely free and open-source. It is distributed under the **G
 ## 📞 Support
 
 * **Social**: [@kijyoumusic]()
+
