@@ -71,7 +71,7 @@ A comprehensive manual covering detailed technical specifications and operationa
 
 [ ![Manual PDF (JP)](https://img.shields.io/badge/Manual-PDF_(JP)-red?style=for-the-badge&logo=adobe-acrobat-reader) ](./Source/Assets/LUMINA_Manual_JP.pdf)
 
-[ ![Manual PDF (EN)](https://img.shields.io/badge/Manual-PDF_(EN)-red?style=for-the-badge&logo=adobe-acrobat-reader) ](./Source/Assets/LUMINA_Manual_EN.pdff)
+[ ![Manual PDF (EN)](https://img.shields.io/badge/Manual-PDF_(EN)-red?style=for-the-badge&logo=adobe-acrobat-reader) ](./Source/Assets/LUMINA_Manual_EN.pdf)
 
 **Key Contents of the Manual:**
 
