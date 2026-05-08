@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-GPLv3-green)
 ![JUCE](https://img.shields.io/badge/JUCE-8.0.8-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20-lightgrey)
-![Downloads](https://img.shields.io/github/downloads/OTODESK4193/NEOTO_Pre/total.svg)
+![Downloads](https://img.shields.io/github/downloads/OTODESK4193/LUMINA/total.svg)
 
 ##
 <img src="Source/Assets/Screenshot1.jpg" width="600">
@@ -68,6 +68,10 @@ Deep control over the time and frequency domains:
 ## 📚 User Guide
 
 A comprehensive manual covering detailed technical specifications and operational guidelines is included with this repository.
+
+[ ![Manual PDF (JP)](https://img.shields.io/badge/Manual-PDF_(JP)-red?style=for-the-badge&logo=adobe-acrobat-reader) ](./Source/Assets/LUMINA_Manual_JP.pdf)
+
+[ ![Manual PDF (EN)](https://img.shields.io/badge/Manual-PDF_(EN)-red?style=for-the-badge&logo=adobe-acrobat-reader) ](./Source/Assets/LUMINA_Manual_EN.pdff)
 
 **Key Contents of the Manual:**
 
