@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="F5OJxs" name="LUMINA" projectType="audioplug" useAppConfig="0"
+              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1">
+  <MAINGROUP id="BCbnIP" name="LUMINA">
+    <GROUP id="{6AE0968C-E7E8-F8EC-BB59-4AE198DE0058}" name="Source">
+      <GROUP id="{D511358C-1488-4998-2815-0A0F80144F1B}" name="Assets">
+        <FILE id="xn1r7C" name="LUMINA_Manual_EN.pdf" compile="0" resource="1"
+              file="Source/Assets/LUMINA_Manual_EN.pdf"/>
+        <FILE id="WyqF15" name="LUMINA_Manual_JP.pdf" compile="0" resource="1"
+              file="Source/Assets/LUMINA_Manual_JP.pdf"/>
+        <FILE id="dTXdqQ" name="Screenshot1.jpg" compile="0" resource="1" file="Source/Assets/Screenshot1.jpg"/>
+        <FILE id="P2HgME" name="Screenshot2.jpg" compile="0" resource="1" file="Source/Assets/Screenshot2.jpg"/>
+      </GROUP>
+      <GROUP id="{B9D762B1-5319-2CB4-A7AA-7C91F181AE2F}" name="DSP">
+        <FILE id="l3K4ls" name="AnalyzerCore.cpp" compile="1" resource="0"
+              file="Source/DSP/AnalyzerCore.cpp"/>
+        <FILE id="KctPOt" name="AnalyzerCore.h" compile="0" resource="0" file="Source/DSP/AnalyzerCore.h"/>
+        <FILE id="bhRhUx" name="HPSSEngine.cpp" compile="1" resource="0" file="Source/DSP/HPSSEngine.cpp"/>
+        <FILE id="QAjgH4" name="HPSSEngine.h" compile="0" resource="0" file="Source/DSP/HPSSEngine.h"/>
+        <FILE id="rOhKkn" name="MaskingModel.cpp" compile="1" resource="0"
+              file="Source/DSP/MaskingModel.cpp"/>
+        <FILE id="GkuisC" name="MaskingModel.h" compile="0" resource="0" file="Source/DSP/MaskingModel.h"/>
+        <FILE id="qtmIhX" name="MSEncoder.cpp" compile="1" resource="0" file="Source/DSP/MSEncoder.cpp"/>
+        <FILE id="kpyKnA" name="MSEncoder.h" compile="0" resource="0" file="Source/DSP/MSEncoder.h"/>
+        <FILE id="K0Tq7D" name="OnsetDetector.cpp" compile="1" resource="0"
+              file="Source/DSP/OnsetDetector.cpp"/>
+        <FILE id="yMrDqu" name="OnsetDetector.h" compile="0" resource="0" file="Source/DSP/OnsetDetector.h"/>
+        <FILE id="afqAri" name="SpectralEngine.cpp" compile="1" resource="0"
+              file="Source/DSP/SpectralEngine.cpp"/>
+        <FILE id="s0Q3MQ" name="SpectralEngine.h" compile="0" resource="0"
+              file="Source/DSP/SpectralEngine.h"/>
+      </GROUP>
+      <GROUP id="{325F4575-ECB5-C72F-1816-8659F33F9D22}" name="GUI">
+        <FILE id="G57ipb" name="AbletonLookAndFeel.h" compile="0" resource="0"
+              file="Source/GUI/AbletonLookAndFeel.h"/>
+        <FILE id="DdJUjl" name="AnalysisFifo.h" compile="0" resource="0" file="Source/GUI/AnalysisFifo.h"/>
+        <FILE id="mVF3il" name="GRMeter.cpp" compile="1" resource="0" file="Source/GUI/GRMeter.cpp"/>
+        <FILE id="tdKkHg" name="GRMeter.h" compile="0" resource="0" file="Source/GUI/GRMeter.h"/>
+        <FILE id="yQCquK" name="SpectrumAnalyzer.cpp" compile="1" resource="0"
+              file="Source/GUI/SpectrumAnalyzer.cpp"/>
+        <FILE id="pPmSHf" name="SpectrumAnalyzer.h" compile="0" resource="0"
+              file="Source/GUI/SpectrumAnalyzer.h"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="{DCF49708-A1D0-76A7-4B8A-D12481E1F88B}" name="Source">
+      <FILE id="twvqS4" name="PluginProcessor.cpp" compile="1" resource="0"
+            file="Source/PluginProcessor.cpp"/>
+      <FILE id="ZGFkwn" name="PluginProcessor.h" compile="0" resource="0"
+            file="Source/PluginProcessor.h"/>
+      <FILE id="ua8nq5" name="PluginEditor.cpp" compile="1" resource="0"
+            file="Source/PluginEditor.cpp"/>
+      <FILE id="gc3mwp" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+    </GROUP>
+  </MAINGROUP>
+  <MODULES>
+    <MODULE id="juce_analytics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_animation" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="1"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_processors_headless" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="1"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_box2d" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_cryptography" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_javascript" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_midi_ci" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_opengl" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_osc" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_product_unlocking" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="1"/>
+    <MODULE id="juce_video" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+  </MODULES>
+  <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_VST3_CAN_REPLACE_VST2="0"/>
+  <EXPORTFORMATS>
+    <XCODE_MAC targetFolder="Builds/MacOSX">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="LUMINA"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="LUMINA"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_analytics" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_animation" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_basics" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_box2d" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_cryptography" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_dsp" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_javascript" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_midi_ci" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_opengl" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_osc" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_product_unlocking" path="../../../../../Applications/JUCE/modules"/>
+        <MODULEPATH id="juce_video" path="../../../../../Applications/JUCE/modules"/>
+      </MODULEPATHS>
+    </XCODE_MAC>
+  </EXPORTFORMATS>
+</JUCERPROJECT>
